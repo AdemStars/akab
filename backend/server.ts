@@ -30,19 +30,14 @@ app.use(
   })
 );
 
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:4000',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:4000',
-];
-if (config.corsOrigin && config.corsOrigin !== '*') {
-  allowedOrigins.push(...config.corsOrigin.split(',').map((o) => o.trim()));
-}
-
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: [
+      'http://localhost:3000',
+      'http://localhost:4000',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:4000',
+    ],
     credentials: true,
   })
 );
