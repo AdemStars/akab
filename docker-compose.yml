@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  ipfs:
+    image: ipfs/kubo:v0.26.0
+    container_name: akab-ipfs
+    restart: unless-stopped
+    ports:
+      - "4001:4001" # IPFS swarm
+      - "5001:5001" # IPFS API
+      - "8080:8080" # IPFS Gateway
+    volumes:
+      - ipfs_staging:/export
+      - ipfs_data:/data/ipfs
+    environment:
+      - IPFS_PATH=/data/ipfs
+    healthcheck:
+      test: ["CMD-SHELL", "ipfs swarm peers || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: akab-backend
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=production
+      - JWT_SECRET=change_me_in_production_jwt_secret_key_akab
+      - DATABASE_URL=/app/data/akab.sqlite
+      - IPFS_API_URL=http://ipfs:5001
+      - IPFS_GATEWAY=http://ipfs:8080/ipfs/
+      - IPFS_FALLBACK_LOCAL=true
+      - CORS_ORIGIN=*
+      - ADMIN_DEFAULT_EMAIL=admin@akab.local
+      - ADMIN_DEFAULT_PASSWORD=AdminSecurePassword123!
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      - ipfs
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: akab-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  ipfs_staging:
+  ipfs_data:
+  backend_data:
