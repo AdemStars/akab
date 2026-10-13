@@ -3,8 +3,12 @@ import jwt from 'jsonwebtoken';
 import { AdminValidatorModel } from '../models/AdminValidator';
 import { config } from '../config';
 import { authenticate } from '../middleware/auth';
+import { rateLimitAuth } from '../middleware/rateLimit';
 
 const router = Router();
+
+// Apply auth rate limiting to all auth endpoints
+router.use(rateLimitAuth);
 
 /**
  * POST /api/auth/login

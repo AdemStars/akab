@@ -3,10 +3,12 @@ import { SignalModel } from '../models/Signal';
 import { AdminValidatorModel } from '../models/AdminValidator';
 import { authenticate, requireRole } from '../middleware/auth';
 import { runGdprCleanup } from '../jobs/cleanup';
+import { rateLimitAuth } from '../middleware/rateLimit';
 
 const router = Router();
 
-// Protect all admin endpoints with authentication
+// Rate limit and protect all admin endpoints
+router.use(rateLimitAuth);
 router.use(authenticate);
 
 /**

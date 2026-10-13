@@ -17,14 +17,32 @@ export const app = express();
 // Security headers and CORS
 app.use(
   helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
+        connectSrc: ["'self'", 'https:', 'http:'],
+      },
+    },
     crossOriginEmbedderPolicy: false,
   })
 );
 
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:4000',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:4000',
+];
+if (config.corsOrigin && config.corsOrigin !== '*') {
+  allowedOrigins.push(...config.corsOrigin.split(',').map((o) => o.trim()));
+}
+
 app.use(
   cors({
-    origin: config.corsOrigin === '*' ? true : config.corsOrigin,
+    origin: allowedOrigins,
     credentials: true,
   })
 );
@@ -75,11 +93,12 @@ app.use('/api/auth', authRouter);
 // Serve frontend static build if exists (for self-hosted single container deployment)
 const frontendDist = path.join(__dirname, '../frontend/dist');
 app.use(express.static(frontendDist));
-app.get('*', (req: Request, res: Response, next: NextFunction) => {
+app.get('*', rateLimitGeneral, (req: Request, res: Response, next: NextFunction) => {
   if (req.path.startsWith('/api')) {
     return next();
   }
-  res.sendFile(path.join(frontendDist, 'index.html'), (err) => {
+  const indexPath = path.resolve(frontendDist, 'index.html');
+  res.sendFile(indexPath, (err) => {
     if (err) {
       next();
     }
