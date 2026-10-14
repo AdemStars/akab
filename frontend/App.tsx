@@ -7,17 +7,19 @@ import {
   ShieldAlert,
   HelpCircle,
   Lock,
+  Clapperboard,
 } from 'lucide-react';
 import { MapComponent } from './components/Map';
 import { SignalForm } from './components/SignalForm';
 import { AdminDashboard } from './components/AdminDashboard';
+import { Feed } from './components/Feed';
 import { Statistics } from './components/Statistics';
 import { AppealPage } from './pages/AppealPage';
 import { PrivacyPage } from './pages/PrivacyPage';
 import { SignalDetailModal } from './components/SignalDetailModal';
 import { Signal } from './utils/api';
 
-type Tab = 'map' | 'report' | 'stats' | 'appeal' | 'admin' | 'privacy';
+type Tab = 'map' | 'feed' | 'report' | 'stats' | 'appeal' | 'admin' | 'privacy';
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<Tab>('map');
@@ -51,6 +53,12 @@ export const App: React.FC = () => {
               onClick={() => setCurrentTab('map')}
             >
               <MapPin size={16} /> Carte & Signalements
+            </button>
+            <button
+              className={`nav-link ${currentTab === 'feed' ? 'active' : ''}`}
+              onClick={() => setCurrentTab('feed')}
+            >
+              <Clapperboard size={16} /> Fil
             </button>
             <button
               className={`nav-link ${currentTab === 'report' ? 'active' : ''}`}
@@ -91,6 +99,7 @@ export const App: React.FC = () => {
         {currentTab === 'map' && (
           <MapComponent onSelectSignal={(sig) => setSelectedSignal(sig)} />
         )}
+        {currentTab === 'feed' && <Feed onSelectSignal={(sig) => setSelectedSignal(sig)} />}
         {currentTab === 'report' && (
           <SignalForm onSuccess={() => setCurrentTab('map')} />
         )}
@@ -108,6 +117,13 @@ export const App: React.FC = () => {
         >
           <MapPin size={18} />
           <span>Carte</span>
+        </button>
+        <button
+          className={`nav-item ${currentTab === 'feed' ? 'active' : ''}`}
+          onClick={() => setCurrentTab('feed')}
+        >
+          <Clapperboard size={18} />
+          <span>Fil</span>
         </button>
         <button
           className={`nav-item ${currentTab === 'report' ? 'active' : ''}`}
