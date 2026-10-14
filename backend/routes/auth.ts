@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { AdminValidatorModel } from '../models/AdminValidator';
 import { config } from '../config';
 import { authenticate } from '../middleware/auth';
+import { AuditLog } from '../models/AuditLog';
 import { rateLimitAuth } from '../middleware/rateLimit';
 
 const router = Router();
@@ -23,14 +24,32 @@ router.post('/login', (req: Request, res: Response): void => {
       return;
     }
 
-    const validator = AdminValidatorModel.findByEmail(email);
+    const validator = typeof email === 'string' ? AdminValidatorModel.findByEmail(email) : null;
     if (!validator) {
+      AuditLog.record({ actorEmail: String(email).slice(0, 200), action: 'login_failed', details: { reason: 'unknown_account' }, req });
       res.status(401).json({ error: 'Identifiants incorrects' });
       return;
     }
 
-    const isValid = AdminValidatorModel.verifyPassword(password, validator.passwordHash);
+    if (AdminValidatorModel.isLocked(validator)) {
+      AuditLog.record({ actorId: validator.id, actorEmail: validator.email, action: 'login_blocked', req });
+      res.status(429).json({ error: 'Compte temporairement verrouillé après plusieurs échecs. Réessayez plus tard.' });
+      return;
+    }
+
+    const isValid = AdminValidatorModel.verifyPassword(String(password), validator.passwordHash);
     if (!isValid) {
+      const locked = AdminValidatorModel.recordFailedLogin(
+        validator.id,
+        config.moderation.maxFailedLogins,
+        config.moderation.lockoutMinutes
+      );
+      AuditLog.record({
+        actorId: validator.id,
+        actorEmail: validator.email,
+        action: locked ? 'account_locked' : 'login_failed',
+        req,
+      });
       res.status(401).json({ error: 'Identifiants incorrects' });
       return;
     }
@@ -40,14 +59,18 @@ router.post('/login', (req: Request, res: Response): void => {
       return;
     }
 
+    AdminValidatorModel.recordSuccessfulLogin(validator.id);
+    AuditLog.record({ actorId: validator.id, actorEmail: validator.email, action: 'login', req });
+
     const token = jwt.sign(
       {
         id: validator.id,
         email: validator.email,
         role: validator.role,
+        tv: validator.tokenVersion,
       },
       config.jwtSecret,
-      { expiresIn: '7d' }
+      { expiresIn: '12h' }
     );
 
     res.json({

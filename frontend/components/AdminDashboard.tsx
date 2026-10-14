@@ -9,6 +9,8 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { API, ApiError, Signal } from '../utils/api';
+import { TeamPanel } from './TeamPanel';
+import { AuditPanel } from './AuditPanel';
 import { formatIpfsGatewayUrl } from '../utils/ipfs';
 import {
   EVENT_TYPE_LABELS,
@@ -35,7 +37,7 @@ export const AdminDashboard: React.FC = () => {
 
   // Dashboard state
   const [signals, setSignals] = useState<Signal[]>([]);
-  const [statusTab, setStatusTab] = useState<'pending' | 'under_appeal' | 'validated' | 'rejected' | 'validators'>(
+  const [statusTab, setStatusTab] = useState<'pending' | 'under_appeal' | 'validated' | 'rejected' | 'validators' | 'team' | 'audit'>(
     'pending'
   );
   const [searchTerm, setSearchTerm] = useState('');
@@ -84,6 +86,9 @@ export const AdminDashboard: React.FC = () => {
     try {
       setLoadingSignals(true);
       setDashboardError(null);
+      if (statusTab === 'team' || statusTab === 'audit') {
+        return;
+      }
       if (statusTab === 'validators') {
         const valRes = await API.getValidators(token);
         setValidatorsList(valRes.validators || []);
@@ -104,15 +109,20 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [token, statusTab, searchTerm]);
 
-  const handleValidate = async (signalId: string) => {
+  const handleValidate = async (signalId: string, force = false) => {
     if (!token) return;
+    if (force && !window.confirm('Publier immédiatement sans second avis ? Cette action est tracée.')) return;
     try {
-      const res = await API.validateSignal(token, signalId);
-      setActionSuccess(`Signalement #${signalId} validé ! (+${res.pointsAwarded || 10} points de confiance)`);
-      if (user) {
-        setUser({ ...user, trustPoints: (user.trustPoints || 0) + (res.pointsAwarded || 10) });
+      const res = await API.validateSignal(token, signalId, force);
+      if (res.finalized) {
+        setActionSuccess(`Signalement #${signalId} publié ! (+${res.pointsAwarded || 10} points de confiance)`);
+        if (user) {
+          setUser({ ...user, trustPoints: (user.trustPoints || 0) + (res.pointsAwarded || 10) });
+        }
+      } else {
+        setActionSuccess(res.message);
       }
-      setTimeout(() => setActionSuccess(null), 4000);
+      setTimeout(() => setActionSuccess(null), 5000);
       loadSignals();
     } catch (err) {
       handleDashboardError(err, 'Erreur de validation.');
@@ -276,10 +286,30 @@ export const AdminDashboard: React.FC = () => {
         >
           Classement modérateurs
         </button>
+        {user?.role === 'admin' && (
+          <>
+            <button
+              className={`btn ${statusTab === 'team' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setStatusTab('team')}
+            >
+              Équipe
+            </button>
+            <button
+              className={`btn ${statusTab === 'audit' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setStatusTab('audit')}
+            >
+              Journal d'audit
+            </button>
+          </>
+        )}
       </div>
 
       {/* Signals Queue */}
-      {statusTab !== 'validators' ? (
+      {statusTab === 'team' ? (
+        <TeamPanel token={token} currentUserId={user?.id} onError={handleDashboardError} />
+      ) : statusTab === 'audit' ? (
+        <AuditPanel token={token} onError={handleDashboardError} />
+      ) : statusTab !== 'validators' ? (
         <div>
           {/* Search bar */}
           <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
@@ -387,17 +417,35 @@ export const AdminDashboard: React.FC = () => {
                   {/* Actions for Pending / Appeal */}
                   {(sig.status === 'pending' || sig.status === 'under_appeal') && (
                     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem', marginTop: '0.75rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      {sig.moderation && (
+                        <div style={{ flexBasis: '100%', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                          Approbations : {sig.moderation.approvals}/{sig.moderation.required}
+                          {sig.moderation.approvedByMe && ' · vous avez déjà approuvé'}
+                          {sig.moderation.rejectedByMe && ' · vous ne pouvez pas traiter ce recours (rejet initial)'}
+                        </div>
+                      )}
                       <button
                         className="btn btn-success"
                         style={{ flex: 1 }}
+                        disabled={sig.moderation?.approvedByMe || sig.moderation?.rejectedByMe}
                         onClick={() => handleValidate(sig.id)}
                       >
-                        <CheckCircle size={18} /> Valider & Publier (+10 pts)
+                        <CheckCircle size={18} /> Approuver ({sig.moderation?.approvals ?? 0}/{sig.moderation?.required ?? 2})
                       </button>
+                      {user?.role === 'admin' && (
+                        <button
+                          className="btn btn-outline"
+                          disabled={sig.moderation?.rejectedByMe}
+                          onClick={() => handleValidate(sig.id, true)}
+                        >
+                          Publier (forcer)
+                        </button>
+                      )}
 
                       <button
                         className="btn btn-outline"
                         style={{ flex: 1, color: '#ff6b6b' }}
+                        disabled={sig.moderation?.rejectedByMe}
                         onClick={() => setRejectingId(rejectingId === sig.id ? null : sig.id)}
                       >
                         <XCircle size={18} /> Rejeter

@@ -104,7 +104,7 @@ def seed(env):
         signal_id = result["signalId"]
         api_request(
             f"/api/admin/signals/{signal_id}/validate",
-            {},
+            {"force": True},
             token,
             "PATCH",
         )

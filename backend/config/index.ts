@@ -53,6 +53,11 @@ export const config = {
     password: configuredAdminPassword || 'AdminSecurePassword123!',
     name: process.env.ADMIN_DEFAULT_NAME || 'Admin AKAB',
   },
+  moderation: {
+    requiredApprovals: Math.max(1, parseInt(process.env.MODERATION_REQUIRED_APPROVALS || '2', 10) || 2),
+    maxFailedLogins: parseInt(process.env.MODERATION_MAX_FAILED_LOGINS || '5', 10) || 5,
+    lockoutMinutes: parseInt(process.env.MODERATION_LOCKOUT_MINUTES || '15', 10) || 15,
+  },
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 mins
     maxSubmissions: parseInt(process.env.RATE_LIMIT_MAX_SUBMISSIONS || '20', 10),
@@ -154,6 +159,29 @@ export function initDatabase(db: Database.Database) {
       createdAt TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS moderation_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      signalId TEXT NOT NULL,
+      validatorId TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      reason TEXT,
+      createdAt TEXT NOT NULL,
+      UNIQUE (signalId, validatorId)
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      createdAt TEXT NOT NULL,
+      actorId TEXT,
+      actorEmail TEXT,
+      action TEXT NOT NULL,
+      targetType TEXT,
+      targetId TEXT,
+      details TEXT,
+      ip TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(createdAt);
+
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       forgetToken TEXT NOT NULL,
@@ -173,6 +201,20 @@ export function initDatabase(db: Database.Database) {
   ];
   for (const [column, migration] of signalMigrations) {
     if (!existingSignalColumns.has(column)) {
+      db.exec(migration);
+    }
+  }
+
+  const validatorColumns = db.prepare('PRAGMA table_info(validators)').all() as Array<{ name: string }>;
+  const existingValidatorColumns = new Set(validatorColumns.map((column) => column.name));
+  const validatorMigrations: Array<[string, string]> = [
+    ['failedLoginAttempts', 'ALTER TABLE validators ADD COLUMN failedLoginAttempts INTEGER NOT NULL DEFAULT 0'],
+    ['lockedUntil', 'ALTER TABLE validators ADD COLUMN lockedUntil TEXT'],
+    ['lastLoginAt', 'ALTER TABLE validators ADD COLUMN lastLoginAt TEXT'],
+    ['tokenVersion', 'ALTER TABLE validators ADD COLUMN tokenVersion INTEGER NOT NULL DEFAULT 0'],
+  ];
+  for (const [column, migration] of validatorMigrations) {
+    if (existingValidatorColumns.size > 0 && !existingValidatorColumns.has(column)) {
       db.exec(migration);
     }
   }

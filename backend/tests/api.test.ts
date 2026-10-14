@@ -15,6 +15,9 @@ describe('AKAB Backend API Test Suite', () => {
     const testDb = new Database(':memory:');
     setTestDatabase(testDb);
 
+    // Legacy scenarios below use a single reviewer; two-person review has its own suite.
+    config.moderation.requiredApprovals = 1;
+
     // Login as admin
     const loginRes = await request(app).post('/api/auth/login').send({
       email: config.adminDefault.email,
@@ -367,5 +370,215 @@ describe('AKAB Backend API Test Suite', () => {
     expect(res.body.validators.length).toBeGreaterThan(0);
     expect(res.body.validators[0].trustPoints).toBeGreaterThan(0);
     expect(res.body.validators[0].passwordHash).toBeUndefined(); // Password hash hidden
+  });
+
+  describe('Robust moderation', () => {
+    const modPassword = 'moderator-password-123';
+    const secondPassword = 'second-moderator-pass-123';
+    let modToken: string;
+    let secondToken: string;
+    let modId: string;
+
+    const createSignal = async (title: string): Promise<string> => {
+      const res = await request(app)
+        .post('/api/signals')
+        .set('x-bypass-ratelimit', 'true')
+        .send({
+          title,
+          description: 'Description suffisamment longue pour la modération.',
+          incidentDate: '2026-06-10T11:00:00.000Z',
+          incidentType: 'violence_physique',
+          latitude: 48.8566,
+          longitude: 2.3522,
+          city: 'Paris',
+          department: '75',
+          gdprConsent: true,
+        });
+      expect(res.status).toBe(201);
+      return res.body.signalId;
+    };
+
+    const login = async (email: string, password: string) =>
+      request(app).post('/api/auth/login').send({ email, password });
+
+    beforeAll(async () => {
+      config.moderation.requiredApprovals = 2;
+      const first = await request(app)
+        .post('/api/admin/validators')
+        .set('Authorization', 'Bearer ' + adminToken)
+        .send({ email: 'mod1@akab.local', password: modPassword, name: 'Modérateur 1' });
+      expect(first.status).toBe(201);
+      modId = first.body.validator.id;
+      const second = await request(app)
+        .post('/api/admin/validators')
+        .set('Authorization', 'Bearer ' + adminToken)
+        .send({ email: 'mod2@akab.local', password: secondPassword, name: 'Modérateur 2' });
+      expect(second.status).toBe(201);
+      modToken = (await login('mod1@akab.local', modPassword)).body.token;
+      secondToken = (await login('mod2@akab.local', secondPassword)).body.token;
+    });
+
+    afterAll(() => {
+      config.moderation.requiredApprovals = 1;
+    });
+
+    it('rejects weak passwords and invalid emails for new accounts', async () => {
+      const weak = await request(app)
+        .post('/api/admin/validators')
+        .set('Authorization', 'Bearer ' + adminToken)
+        .send({ email: 'weak@akab.local', password: 'short', name: 'Faible' });
+      expect(weak.status).toBe(400);
+      const badEmail = await request(app)
+        .post('/api/admin/validators')
+        .set('Authorization', 'Bearer ' + adminToken)
+        .send({ email: 'not-an-email', password: 'long-enough-password', name: 'X' });
+      expect(badEmail.status).toBe(400);
+    });
+
+    it('publishes only after two distinct moderators approve', async () => {
+      const id = await createSignal('Double validation');
+
+      const first = await request(app)
+        .patch(`/api/admin/signals/${id}/validate`)
+        .set('Authorization', 'Bearer ' + modToken);
+      expect(first.status).toBe(200);
+      expect(first.body.finalized).toBe(false);
+      expect(first.body.signal.status).toBe('pending');
+
+      const repeat = await request(app)
+        .patch(`/api/admin/signals/${id}/validate`)
+        .set('Authorization', 'Bearer ' + modToken);
+      expect(repeat.status).toBe(409);
+
+      const listed = await request(app)
+        .get('/api/admin/signals?status=pending')
+        .set('Authorization', 'Bearer ' + modToken);
+      const entry = listed.body.signals.find((signal: any) => signal.id === id);
+      expect(entry.moderation).toMatchObject({ approvals: 1, required: 2, approvedByMe: true });
+
+      const second = await request(app)
+        .patch(`/api/admin/signals/${id}/validate`)
+        .set('Authorization', 'Bearer ' + secondToken);
+      expect(second.status).toBe(200);
+      expect(second.body.finalized).toBe(true);
+      expect(second.body.signal.status).toBe('validated');
+
+      const again = await request(app)
+        .patch(`/api/admin/signals/${id}/validate`)
+        .set('Authorization', 'Bearer ' + adminToken);
+      expect(again.status).toBe(409);
+    });
+
+    it('lets only administrators force publication and records it in the audit log', async () => {
+      const id = await createSignal('Publication forcée');
+
+      const denied = await request(app)
+        .patch(`/api/admin/signals/${id}/validate`)
+        .set('Authorization', 'Bearer ' + modToken)
+        .send({ force: true });
+      expect(denied.status).toBe(403);
+
+      const forced = await request(app)
+        .patch(`/api/admin/signals/${id}/validate`)
+        .set('Authorization', 'Bearer ' + adminToken)
+        .send({ force: true });
+      expect(forced.status).toBe(200);
+      expect(forced.body.signal.status).toBe('validated');
+
+      const audit = await request(app)
+        .get('/api/admin/audit?action=signal_force_published')
+        .set('Authorization', 'Bearer ' + adminToken);
+      expect(audit.status).toBe(200);
+      expect(audit.body.entries.some((entry: any) => entry.targetId === id)).toBe(true);
+
+      const forbidden = await request(app).get('/api/admin/audit').set('Authorization', 'Bearer ' + modToken);
+      expect(forbidden.status).toBe(403);
+    });
+
+    it('keeps the original rejector away from the appeal and makes a second appeal impossible', async () => {
+      const id = await createSignal('Recours encadré');
+
+      const rejected = await request(app)
+        .patch(`/api/admin/signals/${id}/reject`)
+        .set('Authorization', 'Bearer ' + modToken)
+        .send({ reason: 'Preuves insuffisantes pour publier.' });
+      expect(rejected.status).toBe(200);
+
+      const appeal = await request(app)
+        .post(`/api/signals/${id}/appeal`)
+        .set('x-bypass-ratelimit', 'true')
+        .send({ reason: 'Un témoin supplémentaire confirme les faits décrits.' });
+      expect(appeal.status).toBe(200);
+
+      const sameModerator = await request(app)
+        .patch(`/api/admin/signals/${id}/validate`)
+        .set('Authorization', 'Bearer ' + modToken);
+      expect(sameModerator.status).toBe(403);
+
+      const final = await request(app)
+        .patch(`/api/admin/signals/${id}/reject`)
+        .set('Authorization', 'Bearer ' + secondToken)
+        .send({ reason: 'Recours examiné, preuves toujours insuffisantes.' });
+      expect(final.status).toBe(200);
+
+      const secondAppeal = await request(app)
+        .post(`/api/signals/${id}/appeal`)
+        .set('x-bypass-ratelimit', 'true')
+        .send({ reason: 'Nouvelle tentative de recours après décision.' });
+      expect(secondAppeal.status).toBe(409);
+    });
+
+    it('locks an account after repeated failures and audits it', async () => {
+      for (let attempt = 0; attempt < config.moderation.maxFailedLogins; attempt += 1) {
+        const res = await login('mod2@akab.local', 'wrong-password-value');
+        expect(res.status).toBe(401);
+      }
+      const blocked = await login('mod2@akab.local', secondPassword);
+      expect(blocked.status).toBe(429);
+
+      getDatabase().prepare('UPDATE validators SET lockedUntil = NULL WHERE email = ?').run('mod2@akab.local');
+      const ok = await login('mod2@akab.local', secondPassword);
+      expect(ok.status).toBe(200);
+
+      const audit = await request(app)
+        .get('/api/admin/audit?action=account_locked')
+        .set('Authorization', 'Bearer ' + adminToken);
+      expect(audit.body.total).toBeGreaterThan(0);
+    });
+
+    it('manages accounts safely: deactivation, password reset and last-admin protection', async () => {
+      const me = await request(app).get('/api/auth/me').set('Authorization', 'Bearer ' + adminToken);
+      const adminId = me.body.user.id;
+
+      const selfDemote = await request(app)
+        .patch(`/api/admin/validators/${adminId}`)
+        .set('Authorization', 'Bearer ' + adminToken)
+        .send({ role: 'moderator' });
+      expect(selfDemote.status).toBe(400);
+
+      const notAdmin = await request(app)
+        .patch(`/api/admin/validators/${modId}`)
+        .set('Authorization', 'Bearer ' + modToken)
+        .send({ isActive: false });
+      expect(notAdmin.status).toBe(403);
+
+      const reset = await request(app)
+        .patch(`/api/admin/validators/${modId}`)
+        .set('Authorization', 'Bearer ' + adminToken)
+        .send({ password: 'brand-new-password-456' });
+      expect(reset.status).toBe(200);
+      expect(reset.body.validator.passwordHash).toBeUndefined();
+
+      const staleSession = await request(app).get('/api/auth/me').set('Authorization', 'Bearer ' + modToken);
+      expect(staleSession.status).toBe(401);
+      expect((await login('mod1@akab.local', 'brand-new-password-456')).status).toBe(200);
+
+      const deactivate = await request(app)
+        .patch(`/api/admin/validators/${modId}`)
+        .set('Authorization', 'Bearer ' + adminToken)
+        .send({ isActive: false });
+      expect(deactivate.status).toBe(200);
+      expect((await login('mod1@akab.local', 'brand-new-password-456')).status).toBe(403);
+    });
   });
 });

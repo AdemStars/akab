@@ -80,12 +80,15 @@ Les preuves (photos et vidéos) sont archivées sur le réseau décentralisé **
 ## ⚖️ Système de modération & Points de confiance
 
 Pour garantir l'intégrité et la véracité des faits publiés :
-- **Validation manuelle préalable** : aucun signalement n'apparaît sur la carte publique avant validation par un modérateur.
+- **Double validation** : un signalement n'est publié qu'après l'approbation de `MODERATION_REQUIRED_APPROVALS` modérateurs distincts (2 par défaut). Un administrateur peut forcer une publication ; l'action est tracée.
+- **Journal d'audit** : connexions, échecs, verrouillages, votes, publications, rejets et gestion des comptes sont journalisés (consultable par les administrateurs).
+- **Comptes** : mot de passe d'au moins 12 caractères, verrouillage temporaire après échecs répétés, sessions de 12 h invalidées lors d'une réinitialisation de mot de passe, impossibilité de retirer le dernier administrateur actif.
 - **Points de confiance (Trust Points)** :
   - Chaque validation correcte augmente le capital de confiance du modérateur (`trustPoints`).
   - Le système identifie les modérateurs les plus fiables et permet d'accélérer le traitement des files d'attente.
 - **Droit au recours** :
-  - En cas de rejet, un motif explicite est renseigné. Le citoyen peut exercer un recours en fournissant des éléments complémentaires.
+  - En cas de rejet, un motif explicite est renseigné. Le citoyen peut exercer un recours (un seul par signalement) en fournissant des éléments complémentaires ; le modérateur à l'origine du rejet ne peut pas le traiter.
+  - Le compte administrateur local seul ne peut pas atteindre deux approbations : créez un second modérateur dans l'onglet « Équipe », ou utilisez « Publier (forcer) ».
 
 ---
 

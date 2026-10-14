@@ -1219,3 +1219,12 @@ button, input, textarea, select {
 .feed-filters .form-select { flex: 2; }
 .feed-filters .form-input { flex: 1; min-width: 0; }
 .feed-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.feedback-success {
+  background: rgba(42, 157, 143, 0.2);
+  border: 1px solid var(--accent-green);
+  color: #2ec4b6;
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+}

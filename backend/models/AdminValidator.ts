@@ -15,6 +15,10 @@ export interface AdminValidatorRecord {
   rejectionsCount: number;
   isActive: boolean;
   createdAt: string;
+  failedLoginAttempts: number;
+  lockedUntil: string | null;
+  lastLoginAt: string | null;
+  tokenVersion: number;
 }
 
 export class AdminValidatorModel {
@@ -84,6 +88,64 @@ export class AdminValidatorModel {
     `).run(id);
   }
 
+  static update(
+    id: string,
+    changes: { name?: string; role?: ValidatorRole; isActive?: boolean; password?: string }
+  ): AdminValidatorRecord | null {
+    const db = getDatabase();
+    const current = this.findById(id);
+    if (!current) return null;
+
+    const name = changes.name ?? current.name;
+    const role = changes.role ?? current.role;
+    const isActive = changes.isActive ?? current.isActive;
+    const sessionAffected = role !== current.role || isActive !== current.isActive || !!changes.password;
+    db.prepare(
+      'UPDATE validators SET name = ?, role = ?, isActive = ?, tokenVersion = tokenVersion + ? WHERE id = ?'
+    ).run(name, role, isActive ? 1 : 0, sessionAffected ? 1 : 0, id);
+
+    if (changes.password) {
+      db.prepare(
+        `UPDATE validators
+         SET passwordHash = ?, failedLoginAttempts = 0, lockedUntil = NULL
+         WHERE id = ?`
+      ).run(bcrypt.hashSync(changes.password, bcrypt.genSaltSync(10)), id);
+    }
+    return this.findById(id);
+  }
+
+  static countActiveAdmins(): number {
+    const row = getDatabase()
+      .prepare(`SELECT COUNT(*) AS count FROM validators WHERE role = 'admin' AND isActive = 1`)
+      .get() as { count: number };
+    return row.count;
+  }
+
+  static isLocked(validator: AdminValidatorRecord): boolean {
+    return !!validator.lockedUntil && new Date(validator.lockedUntil).getTime() > Date.now();
+  }
+
+  static recordFailedLogin(id: string, maxAttempts: number, lockoutMinutes: number): boolean {
+    const db = getDatabase();
+    const row = db.prepare('SELECT failedLoginAttempts FROM validators WHERE id = ?').get(id) as any;
+    const attempts = (row?.failedLoginAttempts ?? 0) + 1;
+    if (attempts >= maxAttempts) {
+      db.prepare('UPDATE validators SET failedLoginAttempts = 0, lockedUntil = ? WHERE id = ?').run(
+        new Date(Date.now() + lockoutMinutes * 60_000).toISOString(),
+        id
+      );
+      return true;
+    }
+    db.prepare('UPDATE validators SET failedLoginAttempts = ? WHERE id = ?').run(attempts, id);
+    return false;
+  }
+
+  static recordSuccessfulLogin(id: string): void {
+    getDatabase()
+      .prepare('UPDATE validators SET failedLoginAttempts = 0, lockedUntil = NULL, lastLoginAt = ? WHERE id = ?')
+      .run(new Date().toISOString(), id);
+  }
+
   static verifyPassword(plain: string, hash: string): boolean {
     return bcrypt.compareSync(plain, hash);
   }
@@ -100,6 +162,10 @@ export class AdminValidatorModel {
       rejectionsCount: row.rejectionsCount,
       isActive: Boolean(row.isActive),
       createdAt: row.createdAt,
+      failedLoginAttempts: row.failedLoginAttempts ?? 0,
+      lockedUntil: row.lockedUntil ?? null,
+      lastLoginAt: row.lastLoginAt ?? null,
+      tokenVersion: row.tokenVersion ?? 0,
     };
   }
 }

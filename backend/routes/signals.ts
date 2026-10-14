@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { SignalModel, EvidenceItem } from '../models/Signal';
 import { UserModel } from '../models/User';
+import { ModerationVoteModel } from '../models/ModerationVote';
 import { IpfsService } from '../services/ipfs';
 import { AnonymizationService } from '../services/anonymization';
 import { GdprService } from '../services/gdpr';
@@ -225,6 +226,11 @@ router.post(
       }
 
       const updated = SignalModel.submitAppeal(id, reason);
+      if (!updated) {
+        res.status(409).json({ error: 'Un recours a déjà été déposé pour ce signalement.' });
+        return;
+      }
+      ModerationVoteModel.clear(id);
 
       if (signal.reporterEmail) {
         EmailService.sendAppealConfirmation(signal.reporterEmail, id).catch(() => {});

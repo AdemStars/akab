@@ -303,7 +303,7 @@ export class SignalModel {
           appealReason = ?,
           appealedAt = ?,
           updatedAt = ?
-      WHERE id = ? AND status = 'rejected'
+      WHERE id = ? AND status = 'rejected' AND appealedAt IS NULL
     `).run(appealReason, now, now, id);
 
     if (result.changes === 0) return null;

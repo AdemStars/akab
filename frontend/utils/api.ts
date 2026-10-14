@@ -28,6 +28,12 @@ export interface Signal {
   rejectionReason?: string | null;
   appealReason?: string | null;
   validationScore?: number;
+  moderation?: {
+    approvals: number;
+    required: number;
+    approvedByMe: boolean;
+    rejectedByMe: boolean;
+  };
   reporterEmail?: string | null;
   reporterPhone?: string | null;
   forgetToken?: string;
@@ -206,13 +212,17 @@ export const API = {
     return res.json();
   },
 
-  async validateSignal(token: string, id: string): Promise<any> {
+  async validateSignal(token: string, id: string, force = false): Promise<any> {
     const res = await fetch(`/api/admin/signals/${id}/validate`, {
       method: 'PATCH',
-      headers: { Authorization: 'Bearer ' + token },
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
     });
 
-    if (!res.ok) throw new ApiError('Erreur lors de la validation', res.status);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new ApiError(err.error || 'Erreur lors de la validation', res.status);
+    }
     return res.json();
   },
 
@@ -226,7 +236,10 @@ export const API = {
       body: JSON.stringify({ reason }),
     });
 
-    if (!res.ok) throw new ApiError('Erreur lors du rejet', res.status);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new ApiError(err.error || 'Erreur lors du rejet', res.status);
+    }
     return res.json();
   },
 
@@ -237,4 +250,42 @@ export const API = {
     if (!res.ok) throw new ApiError('Erreur chargement modérateurs', res.status);
     return res.json();
   },
+
+  async createValidator(
+    token: string,
+    input: { email: string; name: string; password: string; role: 'admin' | 'moderator' }
+  ): Promise<any> {
+    return adminJson(token, '/api/admin/validators', 'POST', input);
+  },
+
+  async updateValidator(
+    token: string,
+    id: string,
+    changes: { role?: 'admin' | 'moderator'; isActive?: boolean; password?: string }
+  ): Promise<any> {
+    return adminJson(token, `/api/admin/validators/${id}`, 'PATCH', changes);
+  },
+
+  async getAuditLog(token: string, action?: string, offset = 0): Promise<any> {
+    const params = new URLSearchParams({ limit: '50', offset: String(offset) });
+    if (action) params.set('action', action);
+    return adminJson(token, `/api/admin/audit?${params.toString()}`, 'GET');
+  },
 };
+
+async function adminJson(token: string, url: string, method: string, body?: unknown): Promise<any> {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: 'Bearer ' + token,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiError(err.error || 'Erreur de requête', res.status);
+  }
+  return res.json();
+}
+

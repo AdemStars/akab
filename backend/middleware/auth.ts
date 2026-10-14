@@ -38,6 +38,11 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
       return;
     }
 
+    if ((decoded.tv ?? 0) !== validator.tokenVersion) {
+      res.status(401).json({ error: 'Session invalidée : reconnectez-vous.' });
+      return;
+    }
+
     req.user = {
       id: validator.id,
       email: validator.email,
