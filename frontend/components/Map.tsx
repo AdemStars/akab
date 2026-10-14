@@ -10,6 +10,8 @@ interface MapProps {
   filters?: SignalFilters;
   onFilterChange?: (filters: SignalFilters) => void;
   onSelectSignal: (signal: Signal) => void;
+  focusSignal?: Signal | null;
+  onFocusHandled?: () => void;
 }
 
 export const MapComponent: React.FC<MapProps> = ({
@@ -17,7 +19,11 @@ export const MapComponent: React.FC<MapProps> = ({
   filters: propFilters,
   onFilterChange: propOnFilterChange,
   onSelectSignal,
+  focusSignal,
+  onFocusHandled,
 }) => {
+  const focusRef = useRef<Signal | null>(null);
+  focusRef.current = focusSignal ?? null;
   const [internalSignals, setInternalSignals] = useState<Signal[]>([]);
   const [internalFilters, setInternalFilters] = useState<SignalFilters>({});
   const [loading, setLoading] = useState<boolean>(false);
@@ -181,7 +187,11 @@ export const MapComponent: React.FC<MapProps> = ({
     });
 
     // Auto-fit bounds if signals exist
-    if (signals.length > 0 && mapInstanceRef.current) {
+    const focus = focusRef.current;
+    if (focus && signals.length > 0 && mapInstanceRef.current) {
+      mapInstanceRef.current.setView([focus.latitude, focus.longitude], 18);
+      onFocusHandled?.();
+    } else if (signals.length > 0 && mapInstanceRef.current) {
       if (signals.length === 1) {
         const signal = signals[0];
         mapInstanceRef.current.setView([signal.latitude, signal.longitude], 19);

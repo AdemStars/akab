@@ -1,27 +1,30 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Info, MapPin, Calendar, Flag } from 'lucide-react';
 import { API, Signal } from '../utils/api';
 import { formatIpfsGatewayUrl } from '../utils/ipfs';
-import { EVENT_TYPE_LABELS } from '../utils/signalLabels';
+import { EVENT_TYPE_LABELS, INCIDENT_TYPE_OPTIONS } from '../utils/signalLabels';
 
 interface FeedProps {
   onSelectSignal: (signal: Signal) => void;
+  onShowOnMap: (signal: Signal) => void;
 }
 
 const MAX_DESCRIPTION = 280;
 
-export const Feed: React.FC<FeedProps> = ({ onSelectSignal }) => {
-  const [signals, setSignals] = useState<Signal[]>([]);
+export const Feed: React.FC<FeedProps> = ({ onSelectSignal, onShowOnMap }) => {
+  const [allSignals, setAllSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
+  const [typeFilter, setTypeFilter] = useState('');
+  const [cityFilter, setCityFilter] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     API
       .getSignals({})
       .then(({ signals: list }) =>
-        setSignals(
+        setAllSignals(
           [...list].sort(
             (a, b) => new Date(b.incidentDate).getTime() - new Date(a.incidentDate).getTime()
           )
@@ -30,6 +33,20 @@ export const Feed: React.FC<FeedProps> = ({ onSelectSignal }) => {
       .catch((err) => setError(err instanceof Error ? err.message : 'Chargement impossible'))
       .finally(() => setLoading(false));
   }, []);
+
+  const signals = useMemo(() => {
+    const city = cityFilter.trim().toLowerCase();
+    return allSignals.filter(
+      (sig) =>
+        (!typeFilter || sig.incidentType === typeFilter) &&
+        (!city || (sig.city || '').toLowerCase().includes(city))
+    );
+  }, [allSignals, typeFilter, cityFilter]);
+
+  useEffect(() => {
+    setIndex(0);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+  }, [typeFilter, cityFilter]);
 
   const goTo = useCallback((next: number) => {
     const container = containerRef.current;
@@ -56,12 +73,36 @@ export const Feed: React.FC<FeedProps> = ({ onSelectSignal }) => {
 
   if (loading) return <div className="feed-state">Chargement du fil…</div>;
   if (error) return <div className="feed-state" role="alert">{error}</div>;
-  if (signals.length === 0) {
+  if (allSignals.length === 0) {
     return <div className="feed-state">Aucun signalement validé pour le moment.</div>;
   }
 
   return (
     <div className="feed-wrapper">
+      <div className="feed-filters">
+        <select
+          className="form-select"
+          aria-label="Filtrer le fil par type de violence"
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+        >
+          <option value="">Tous types de violences</option>
+          {INCIDENT_TYPE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          className="form-input"
+          aria-label="Filtrer le fil par ville"
+          placeholder="Ville..."
+          value={cityFilter}
+          onChange={(e) => setCityFilter(e.target.value)}
+        />
+      </div>
+      {signals.length === 0 && (
+        <div className="feed-state">Aucun signalement ne correspond à ces filtres.</div>
+      )}
       <div
         className="feed"
         ref={containerRef}
@@ -115,9 +156,14 @@ export const Feed: React.FC<FeedProps> = ({ onSelectSignal }) => {
                   </span>
                 </div>
                 <p className="feed-description">{description}</p>
-                <button className="btn btn-outline" onClick={() => onSelectSignal(signal)}>
-                  <Info size={16} /> Détails et preuves
-                </button>
+                <div className="feed-actions">
+                  <button className="btn btn-outline" onClick={() => onSelectSignal(signal)}>
+                    <Info size={16} /> Détails et preuves
+                  </button>
+                  <button className="btn btn-outline" onClick={() => onShowOnMap(signal)}>
+                    <MapPin size={16} /> Voir sur la carte
+                  </button>
+                </div>
               </div>
               <div className="feed-counter">{i + 1} / {signals.length}</div>
             </article>

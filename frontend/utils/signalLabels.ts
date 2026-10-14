@@ -29,3 +29,14 @@ export function formatGpsAccuracy(accuracyMeters: number | null): string | null 
   }
   return `±${Math.round(accuracyMeters)} m`;
 }
+
+export const INCIDENT_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'violence_physique', label: 'Violence physique' },
+  { value: 'violence_verbale', label: 'Violence verbale / insultes' },
+  { value: 'tir_lbd', label: 'Tir de LBD / lanceur' },
+  { value: 'gaz_lacrymo', label: 'Gaz lacrymogène massif' },
+  { value: 'grenade_desencerclement', label: 'Grenade de désencerclement' },
+  { value: 'interpellation_violente', label: 'Interpellation violente' },
+  { value: 'materiel_detruit', label: 'Matériel détruit (téléphone, etc.)' },
+  { value: 'autre', label: 'Autre incident' },
+];

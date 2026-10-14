@@ -1215,3 +1215,7 @@ button, input, textarea, select {
 @media (max-width: 1100px) {
   .feed { height: calc(100dvh - 160px); border-radius: 0; }
 }
+.feed-filters { display: flex; gap: 0.5rem; margin-bottom: 0.6rem; }
+.feed-filters .form-select { flex: 2; }
+.feed-filters .form-input { flex: 1; min-width: 0; }
+.feed-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }

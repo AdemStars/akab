@@ -24,6 +24,7 @@ type Tab = 'map' | 'feed' | 'report' | 'stats' | 'appeal' | 'admin' | 'privacy';
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<Tab>('map');
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
+  const [focusSignal, setFocusSignal] = useState<Signal | null>(null);
 
   return (
     <div className="app">
@@ -97,9 +98,19 @@ export const App: React.FC = () => {
       {/* Main Content View */}
       <main className="main-content">
         {currentTab === 'map' && (
-          <MapComponent onSelectSignal={(sig) => setSelectedSignal(sig)} />
+          <MapComponent
+            onSelectSignal={setSelectedSignal}
+            focusSignal={focusSignal}
+            onFocusHandled={() => setFocusSignal(null)}
+          />
         )}
-        {currentTab === 'feed' && <Feed onSelectSignal={(sig) => setSelectedSignal(sig)} />}
+        {currentTab === 'feed' && <Feed
+            onSelectSignal={setSelectedSignal}
+            onShowOnMap={(sig) => {
+              setFocusSignal(sig);
+              setCurrentTab('map');
+            }}
+          />}
         {currentTab === 'report' && (
           <SignalForm onSuccess={() => setCurrentTab('map')} />
         )}
