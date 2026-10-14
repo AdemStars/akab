@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
 import Database from 'better-sqlite3';
 import { app } from '../server';
-import { setTestDatabase, closeDatabase, config, getDatabase } from '../config';
+import { setTestDatabase, closeDatabase, config, getDatabase, initDatabase, validateProductionSecrets } from '../config';
 import { SignalModel } from '../models/Signal';
 import { GdprService } from '../services/gdpr';
 import { IpfsService } from '../services/ipfs';
@@ -28,6 +28,62 @@ describe('AKAB Backend API Test Suite', () => {
 
   afterAll(() => {
     closeDatabase();
+  });
+
+  it('requires strong non-demo secrets in production and permits local development values', () => {
+    expect(() => validateProductionSecrets('production', undefined, undefined)).toThrow(/JWT_SECRET/);
+    expect(() => validateProductionSecrets('production', 'a'.repeat(32), undefined)).toThrow(
+      /ADMIN_DEFAULT_PASSWORD/
+    );
+    expect(() =>
+      validateProductionSecrets('production', 'a'.repeat(32), 'AdminSecurePassword123!')
+    ).toThrow(/démonstration/);
+    expect(() => validateProductionSecrets('production', 'a'.repeat(32), 'a unique password 123')).not.toThrow();
+    expect(() => validateProductionSecrets('development', undefined, undefined)).not.toThrow();
+  });
+
+  it('adds report fields to an existing SQLite database without losing existing columns', () => {
+    const legacyDb = new Database(':memory:');
+    legacyDb.exec(`
+      CREATE TABLE signals (
+        id TEXT PRIMARY KEY,
+        status TEXT,
+        city TEXT,
+        department TEXT,
+        incidentDate TEXT,
+        retentionExpiresAt TEXT
+      );
+      INSERT INTO signals (id, status, city, department, incidentDate, retentionExpiresAt)
+      VALUES ('legacy-signal', 'validated', 'Paris', '75', '2026-01-01T10:00:00.000Z', '2026-02-01T10:00:00.000Z');
+    `);
+
+    initDatabase(legacyDb);
+    initDatabase(legacyDb);
+
+    const columns = new Set(
+      (legacyDb.prepare('PRAGMA table_info(signals)').all() as Array<{ name: string }>).map(
+        (column) => column.name
+      )
+    );
+    expect(columns.has('incidentDate')).toBe(true);
+    expect(columns.has('eventType')).toBe(true);
+    expect(columns.has('eventName')).toBe(true);
+    expect(columns.has('victimAgeGroup')).toBe(true);
+    expect(columns.has('locationAccuracyMeters')).toBe(true);
+    expect(legacyDb.prepare('SELECT city FROM signals WHERE id = ?').get('legacy-signal')).toEqual({
+      city: 'Paris',
+    });
+    expect(
+      legacyDb
+        .prepare('SELECT eventType, eventName, victimAgeGroup, locationAccuracyMeters FROM signals WHERE id = ?')
+        .get('legacy-signal')
+    ).toEqual({
+      eventType: 'none',
+      eventName: null,
+      victimAgeGroup: 'unknown',
+      locationAccuracyMeters: null,
+    });
+    legacyDb.close();
   });
 
   it('Healthcheck returns ok', async () => {
@@ -67,8 +123,12 @@ describe('AKAB Backend API Test Suite', () => {
         'Manifestant touché à la jambe par un tir tendu alors qu’il reculait calmement.',
       incidentDate: '2026-05-01T14:30:00.000Z',
       incidentType: 'tir_lbd',
-      latitude: 48.8566,
-      longitude: 2.3522,
+      eventType: 'demonstration',
+      eventName: 'Manifestation fictive pour le test',
+      victimAgeGroup: 'minor',
+      latitude: 48.8566123,
+      longitude: 2.3522456,
+      locationAccuracyMeters: 4.7,
       address: 'Place de la République',
       city: 'Paris',
       postalCode: '75011',
@@ -100,6 +160,14 @@ describe('AKAB Backend API Test Suite', () => {
     expect(res.body.signalId).toMatch(/^sig_/);
     expect(res.body.forgetToken).toMatch(/^fgt_/);
     expect(res.body.status).toBe('pending');
+    expect(SignalModel.findById(res.body.signalId)).toMatchObject({
+      eventType: 'demonstration',
+      eventName: 'Manifestation fictive pour le test',
+      victimAgeGroup: 'minor',
+      latitude: 48.8566123,
+      longitude: 2.3522456,
+      locationAccuracyMeters: 4.7,
+    });
   });
 
   it('Does not expose pending signals in public GET /api/signals', async () => {
@@ -117,6 +185,9 @@ describe('AKAB Backend API Test Suite', () => {
     expect(listRes.status).toBe(200);
     expect(listRes.body.signals.length).toBeGreaterThan(0);
     const signalToValidate = listRes.body.signals[0];
+    expect(signalToValidate.victimAgeGroup).toBe('minor');
+    expect(signalToValidate.latitude).toBe(48.8566123);
+    expect(signalToValidate.locationAccuracyMeters).toBe(4.7);
 
     // 2. Validate signal
     const valRes = await request(app)
@@ -136,6 +207,21 @@ describe('AKAB Backend API Test Suite', () => {
     expect(pubRes.body.signals[0].reporterEmail).toBeNull();
     expect(pubRes.body.signals[0].reporterPhone).toBeNull();
     expect(pubRes.body.signals[0].forgetToken).toBe('');
+    expect(pubRes.body.signals[0].eventType).toBe('demonstration');
+    expect(pubRes.body.signals[0].eventName).toBe('Manifestation fictive pour le test');
+    expect(pubRes.body.signals[0].latitude).toBe(48.8566123);
+    expect(pubRes.body.signals[0].longitude).toBe(2.3522456);
+    expect(pubRes.body.signals[0]).not.toHaveProperty('victimAgeGroup');
+
+    const exportRes = await request(app).get('/api/export/signals?format=geojson');
+    const exportedFeature = exportRes.body.features.find(
+      (feature: { properties: { id: string } }) => feature.properties.id === signalToValidate.id
+    );
+    expect(exportedFeature.properties.eventType).toBe('demonstration');
+    expect(exportedFeature.geometry.coordinates).toEqual([2.3522456, 48.8566123]);
+    expect(exportedFeature.properties).not.toHaveProperty('victimAgeGroup');
+    const statsRes = await request(app).get('/api/export/statistics');
+    expect(statsRes.body.stats.byEventType).toContainEqual({ eventType: 'demonstration', count: 1 });
   });
 
   it('Admin can reject a signal and user can appeal the rejection', async () => {

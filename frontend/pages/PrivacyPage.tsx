@@ -28,7 +28,12 @@ export const PrivacyPage: React.FC = () => {
   };
 
   return (
-    <div className="container" style={{ maxWidth: '800px' }}>
+    <section className="page-shell page-shell-narrow">
+      <header className="page-heading">
+        <p className="page-eyebrow">PROTECTION DES PERSONNES</p>
+        <h1>Confidentialité & RGPD</h1>
+        <p>Comprendre les données collectées, leur visibilité et les moyens d’exercer vos droits.</p>
+      </header>
       <div className="card">
         <h2 className="card-title">
           <Shield size={22} style={{ color: 'var(--accent-green)' }} /> Politique de Confidentialité & RGPD
@@ -57,9 +62,9 @@ export const PrivacyPage: React.FC = () => {
           <div style={{ backgroundColor: 'var(--bg-input)', padding: '0.85rem', borderRadius: 'var(--radius-sm)', borderLeft: '4px solid var(--accent-green)' }}>
             <strong>2. Signalements validés (Intérêt public - RGPD Art. 89) :</strong>
             <p style={{ margin: '0.25rem 0 0', color: 'var(--text-muted)' }}>
-              Les faits vérifiés (lieu, date, description, type de violence) et les preuves anonymisées sont conservés
-              indéfiniment à des fins de recherche sociologique, d'analyse statistique et de défense des droits fondamentaux.
-              Aucune donnée personnelle permettant d'identifier le déclarant n'y est rattachée.
+              Après validation, la date, le type d'incident, le contexte du mouvement et le point GPS exact peuvent être
+              publiés sur la carte et conservés à des fins de recherche et d'analyse. Le statut mineur/majeur d'une victime
+              reste réservé aux modérateurs et n'est pas inclus dans les exports publics.
             </p>
           </div>
 
@@ -127,7 +132,7 @@ export const PrivacyPage: React.FC = () => {
         )}
 
         {forgetError && (
-          <div style={{ color: '#ff6b6b', fontSize: '0.85rem', marginTop: '0.75rem' }}>
+          <div className="feedback-error" role="alert">
             ⚠️ {forgetError}
           </div>
         )}
@@ -141,6 +146,6 @@ export const PrivacyPage: React.FC = () => {
           l'absence d'altération et la résilience contre toute censure ou suppression unilatérale.
         </p>
       </div>
-    </div>
+    </section>
   );
 };

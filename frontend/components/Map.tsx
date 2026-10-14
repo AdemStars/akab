@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { API, Signal, SignalFilters } from '../utils/api';
 import { getCurrentGPSPosition } from '../utils/geolocation';
+import { EVENT_TYPE_LABELS } from '../utils/signalLabels';
 import { Layers, List, Navigation } from 'lucide-react';
 
 interface MapProps {
@@ -59,6 +60,7 @@ export const MapComponent: React.FC<MapProps> = ({
   const markersGroupRef = useRef<L.LayerGroup | null>(null);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [geoLocating, setGeoLocating] = useState(false);
+  const [tileError, setTileError] = useState(false);
 
   // Initialize Leaflet map
   useEffect(() => {
@@ -71,12 +73,15 @@ export const MapComponent: React.FC<MapProps> = ({
       zoomControl: true,
     });
 
-    // CartoDB Dark Matter tiles or OSM standard tiles
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      subdomains: 'abc',
       maxZoom: 19,
-    }).addTo(map);
+    });
+    tileLayer.on('tileerror', () => setTileError(true));
+    tileLayer.on('tileload', () => setTileError(false));
+    tileLayer.addTo(map);
 
     const markersGroup = L.layerGroup().addTo(map);
     markersGroupRef.current = markersGroup;
@@ -123,32 +128,51 @@ export const MapComponent: React.FC<MapProps> = ({
       const marker = L.marker([signal.latitude, signal.longitude], { icon: customIcon });
 
       const evidenceCount = signal.evidence?.length || 0;
-      const formattedDate = new Date(signal.incidentDate).toLocaleDateString('fr-FR', {
+      const formattedDate = new Date(signal.incidentDate).toLocaleString('fr-FR', {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
       });
 
       const popupContent = document.createElement('div');
-      popupContent.style.color = '#121418';
-      popupContent.style.maxWidth = '240px';
-      popupContent.innerHTML = `
-        <h4 style="margin: 0 0 4px; font-size: 14px; font-weight: bold;">${signal.title}</h4>
-        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
-          📅 ${formattedDate} | 📍 ${signal.city || 'Lieu non précisé'}
-        </div>
-        <p style="margin: 4px 0 8px; font-size: 12px; max-height: 60px; overflow: hidden; text-overflow: ellipsis;">
-          ${signal.description}
-        </p>
-        <div style="font-size: 11px; color: #457b9d; margin-bottom: 8px;">
-          📷 ${evidenceCount} preuve(s) IPFS
-        </div>
-      `;
+      popupContent.className = 'map-popup';
+
+      const title = document.createElement('h4');
+      title.className = 'map-popup-title';
+      title.textContent = signal.title;
+
+      const location = document.createElement('div');
+      location.className = 'map-popup-location';
+      location.textContent = `${formattedDate} · ${signal.city || 'Lieu non précisé'}`;
+
+      const incident = document.createElement('div');
+      incident.className = 'map-popup-event';
+      incident.textContent = `Incident : ${signal.incidentType.replace(/_/g, ' ')}`;
+
+      const description = document.createElement('p');
+      description.className = 'map-popup-description';
+      description.textContent = signal.description;
+
+      const evidence = document.createElement('div');
+      evidence.className = 'map-popup-evidence';
+      evidence.textContent = `${evidenceCount} preuve(s) jointe(s)`;
+
+      popupContent.append(title, location, incident);
+      if (signal.eventType && signal.eventType !== 'none') {
+        const event = document.createElement('div');
+        event.className = 'map-popup-event';
+        event.textContent = `Contexte : ${EVENT_TYPE_LABELS[signal.eventType] || signal.eventType}${
+          signal.eventName ? ` · ${signal.eventName}` : ''
+        }`;
+        popupContent.appendChild(event);
+      }
+      popupContent.append(description, evidence);
 
       const btn = document.createElement('button');
       btn.textContent = 'Détails du signalement';
-      btn.style.cssText =
-        'background: #e63946; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; width: 100%;';
+      btn.className = 'map-popup-button';
       btn.onclick = () => onSelectSignal(signal);
       popupContent.appendChild(btn);
 
@@ -158,10 +182,15 @@ export const MapComponent: React.FC<MapProps> = ({
 
     // Auto-fit bounds if signals exist
     if (signals.length > 0 && mapInstanceRef.current) {
-      const bounds = L.latLngBounds(
-        signals.map((s) => [s.latitude, s.longitude] as [number, number])
-      );
-      mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+      if (signals.length === 1) {
+        const signal = signals[0];
+        mapInstanceRef.current.setView([signal.latitude, signal.longitude], 19);
+      } else {
+        const bounds = L.latLngBounds(
+          signals.map((s) => [s.latitude, s.longitude] as [number, number])
+        );
+        mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 17 });
+      }
     }
   }, [signals, onSelectSignal]);
 
@@ -180,15 +209,29 @@ export const MapComponent: React.FC<MapProps> = ({
   };
 
   return (
-    <div>
+    <section className="map-page">
+      <div className="map-heading">
+        <div>
+          <p className="map-eyebrow">OBSERVATOIRE CITOYEN</p>
+          <h1>Carte des signalements</h1>
+          <p className="map-heading-description">
+            Consultez les faits documentés et validés par la communauté.
+          </p>
+        </div>
+        <div className="map-total" aria-live="polite">
+          <span className="map-total-number">{signals.length}</span>
+          <span>signalement{signals.length === 1 ? '' : 's'} validé{signals.length === 1 ? '' : 's'}</span>
+        </div>
+      </div>
+
       {/* Search and Filter Controls */}
-      <div className="card map-filter-bar">
-        <div style={{ display: 'flex', gap: '0.5rem', flex: 1, minWidth: '220px' }}>
+      <div className="map-filter-bar">
+        <div className="map-filter-fields">
           <select
             className="form-select"
+            aria-label="Filtrer par type de violence"
             value={filters.incidentType || ''}
             onChange={(e) => handleFilterChange({ ...filters, incidentType: e.target.value || undefined })}
-            style={{ flex: 1 }}
           >
             <option value="">Tous types de violences</option>
             <option value="violence_physique">Violence physique</option>
@@ -204,26 +247,27 @@ export const MapComponent: React.FC<MapProps> = ({
           <input
             type="text"
             className="form-input"
+            aria-label="Filtrer par ville"
             placeholder="Filtrer par ville..."
             value={filters.city || ''}
             onChange={(e) => handleFilterChange({ ...filters, city: e.target.value || undefined })}
-            style={{ flex: 1 }}
           />
           {loading && (
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', alignSelf: 'center' }}>
+            <span className="map-loading" role="status">
               Chargement...
             </span>
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="map-actions">
           <button
             className={`btn btn-secondary ${viewMode === 'map' ? 'active' : ''}`}
             onClick={() => setViewMode(viewMode === 'map' ? 'list' : 'map')}
-            title="Basculer vue carte / liste"
+            aria-label={`Afficher la vue ${viewMode === 'map' ? 'liste' : 'carte'}`}
+            aria-pressed={viewMode === 'map'}
           >
             {viewMode === 'map' ? <List size={18} /> : <Layers size={18} />}
-            <span style={{ fontSize: '0.85rem' }}>{viewMode === 'map' ? 'Liste' : 'Carte'}</span>
+            <span>{viewMode === 'map' ? 'Liste' : 'Carte'}</span>
           </button>
 
           {viewMode === 'map' && (
@@ -231,10 +275,10 @@ export const MapComponent: React.FC<MapProps> = ({
               className="btn btn-secondary"
               onClick={handleCenterOnUser}
               disabled={geoLocating}
-              title="Centrer sur ma position GPS"
+              aria-label="Centrer la carte sur ma position GPS"
             >
               <Navigation size={18} />
-              <span style={{ fontSize: '0.85rem' }}>{geoLocating ? 'GPS...' : 'Moi'}</span>
+              <span>{geoLocating ? 'GPS...' : 'Ma position'}</span>
             </button>
           )}
         </div>
@@ -242,15 +286,26 @@ export const MapComponent: React.FC<MapProps> = ({
 
       {/* Map View */}
       {viewMode === 'map' ? (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="map-card">
           <div ref={mapContainerRef} className="map-container" />
-          <div style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-            📍 <strong>{signals.length}</strong> signalement(s) validé(s) affiché(s) sur la carte
+          {tileError && (
+            <div className="map-error" role="status">
+              Le fond de carte n’a pas pu être chargé. Vérifiez votre connexion Internet.
+            </div>
+          )}
+          <div className="map-caption">
+            <span className="map-caption-dot" />
+            <span>
+              {signals.length === 0
+                ? 'Aucun signalement validé pour le moment'
+                : `${signals.length} signalement${signals.length === 1 ? '' : 's'} affiché${signals.length === 1 ? '' : 's'} sur la carte`}
+            </span>
+            <span className="map-caption-source">Fond de carte OpenStreetMap</span>
           </div>
         </div>
       ) : (
         /* Accessible List View */
-        <div className="card">
+        <div className="card map-list-card">
           <h3 className="card-title">
             <List size={20} /> Liste des signalements validés ({signals.length})
           </h3>
@@ -275,9 +330,15 @@ export const MapComponent: React.FC<MapProps> = ({
                     <span className="badge badge-red">{signal.incidentType.replace(/_/g, ' ')}</span>
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0' }}>
-                    📅 {new Date(signal.incidentDate).toLocaleDateString('fr-FR')} | 📍{' '}
+                    📅 {new Date(signal.incidentDate).toLocaleString('fr-FR')} | 📍{' '}
                     {signal.city || 'Ville non précisée'} {signal.address ? `(${signal.address})` : ''}
                   </div>
+                  {signal.eventType && signal.eventType !== 'none' && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--accent-blue)', marginBottom: '0.25rem' }}>
+                      {EVENT_TYPE_LABELS[signal.eventType] || signal.eventType}
+                      {signal.eventName ? ` · ${signal.eventName}` : ''}
+                    </div>
+                  )}
                   <p style={{ fontSize: '0.9rem', color: 'var(--text-main)' }}>{signal.description}</p>
                   {signal.evidence?.length > 0 && (
                     <div style={{ fontSize: '0.75rem', color: 'var(--accent-blue)', marginTop: '0.25rem' }}>
@@ -290,6 +351,6 @@ export const MapComponent: React.FC<MapProps> = ({
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 };

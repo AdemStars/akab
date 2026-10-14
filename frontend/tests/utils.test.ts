@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { isValidIpfsCid, formatIpfsGatewayUrl } from '../utils/ipfs';
 import { calculateDistanceKm } from '../utils/geolocation';
 import { RedactionBox } from '../utils/anonymizer';
+import { EVENT_TYPE_LABELS, formatGpsAccuracy, formatGpsCoordinates } from '../utils/signalLabels';
 
 describe('Frontend Utils', () => {
   describe('IPFS Helper', () => {
@@ -45,6 +46,24 @@ describe('Frontend Utils', () => {
       };
       expect(box.width).toBe(100);
       expect(box.height).toBe(80);
+    });
+
+    describe('Report location and context labels', () => {
+      it('formats map coordinates to six decimal places', () => {
+        expect(formatGpsCoordinates(48.8566123, 2.3522456)).toBe('48.856612, 2.352246');
+      });
+
+      it('reports device accuracy without claiming false meter precision', () => {
+        expect(formatGpsAccuracy(4.7)).toBe('±5 m');
+        expect(formatGpsAccuracy(0.3)).toBe('±<1 m');
+        expect(formatGpsAccuracy(null)).toBeNull();
+        expect(formatGpsAccuracy(0)).toBeNull();
+      });
+
+      it('provides a readable label for each collective-event type', () => {
+        expect(EVENT_TYPE_LABELS.demonstration).toBe('Manifestation');
+        expect(EVENT_TYPE_LABELS.strike).toBe('Grève');
+      });
     });
   });
 });

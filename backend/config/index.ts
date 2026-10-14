@@ -1,15 +1,44 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
 
 dotenv.config();
 
+const nodeEnv = process.env.NODE_ENV || 'development';
+const configuredJwtSecret = process.env.JWT_SECRET?.trim();
+const configuredAdminPassword = process.env.ADMIN_DEFAULT_PASSWORD;
+
+export function validateProductionSecrets(
+  environment: string,
+  jwtSecret: string | undefined,
+  adminPassword: string | undefined
+): void {
+  if (environment === 'production') {
+    if (!jwtSecret || jwtSecret.length < 32) {
+      throw new Error('JWT_SECRET doit être défini avec au moins 32 caractères en production.');
+    }
+    if (!adminPassword || adminPassword.length < 16) {
+      throw new Error('ADMIN_DEFAULT_PASSWORD doit être défini avec au moins 16 caractères en production.');
+    }
+    if (adminPassword === 'AdminSecurePassword123!') {
+      throw new Error('Le mot de passe administrateur de démonstration est interdit en production.');
+    }
+  }
+}
+
+validateProductionSecrets(nodeEnv, configuredJwtSecret, configuredAdminPassword);
+
+if (nodeEnv !== 'test' && nodeEnv !== 'production' && !configuredJwtSecret) {
+  console.warn('[CONFIG] JWT_SECRET absent : une clé temporaire aléatoire est utilisée pour ce processus.');
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '4000', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
-  jwtSecret: process.env.JWT_SECRET || 'akab_default_secret_dev_key_32_characters_long',
+  nodeEnv,
+  jwtSecret: configuredJwtSecret || crypto.randomBytes(32).toString('hex'),
   corsOrigin: process.env.CORS_ORIGIN || '*',
   databaseUrl: process.env.DATABASE_URL || path.join(__dirname, '../../data/akab.sqlite'),
   ipfsApiUrl: process.env.IPFS_API_URL || 'http://localhost:5001',
@@ -21,7 +50,7 @@ export const config = {
   gdprCleanupIntervalHours: parseInt(process.env.GDPR_CLEANUP_INTERVAL_HOURS || '24', 10),
   adminDefault: {
     email: process.env.ADMIN_DEFAULT_EMAIL || 'admin@akab.local',
-    password: process.env.ADMIN_DEFAULT_PASSWORD || 'AdminSecurePassword123!',
+    password: configuredAdminPassword || 'AdminSecurePassword123!',
     name: process.env.ADMIN_DEFAULT_NAME || 'Admin AKAB',
   },
   rateLimit: {
@@ -78,8 +107,12 @@ export function initDatabase(db: Database.Database) {
       description TEXT NOT NULL,
       incidentDate TEXT NOT NULL,
       incidentType TEXT NOT NULL,
+      eventType TEXT NOT NULL DEFAULT 'none',
+      eventName TEXT,
+      victimAgeGroup TEXT NOT NULL DEFAULT 'unknown',
       latitude REAL NOT NULL,
       longitude REAL NOT NULL,
+      locationAccuracyMeters REAL,
       address TEXT,
       city TEXT,
       postalCode TEXT,
@@ -130,6 +163,20 @@ export function initDatabase(db: Database.Database) {
     );
   `);
 
+  const signalColumns = db.prepare('PRAGMA table_info(signals)').all() as Array<{ name: string }>;
+  const existingSignalColumns = new Set(signalColumns.map((column) => column.name));
+  const signalMigrations: Array<[string, string]> = [
+    ['eventType', "ALTER TABLE signals ADD COLUMN eventType TEXT NOT NULL DEFAULT 'none'"],
+    ['eventName', 'ALTER TABLE signals ADD COLUMN eventName TEXT'],
+    ['victimAgeGroup', "ALTER TABLE signals ADD COLUMN victimAgeGroup TEXT NOT NULL DEFAULT 'unknown'"],
+    ['locationAccuracyMeters', 'ALTER TABLE signals ADD COLUMN locationAccuracyMeters REAL'],
+  ];
+  for (const [column, migration] of signalMigrations) {
+    if (!existingSignalColumns.has(column)) {
+      db.exec(migration);
+    }
+  }
+
   // Seed default admin if not exists
   const existingAdmin = db.prepare('SELECT id FROM validators WHERE email = ?').get(config.adminDefault.email);
   if (!existingAdmin) {
@@ -139,5 +186,13 @@ export function initDatabase(db: Database.Database) {
       INSERT INTO validators (id, email, passwordHash, name, role, trustPoints, validationsCount, rejectionsCount, isActive, createdAt)
       VALUES (?, ?, ?, ?, 'admin', 500, 0, 0, 1, ?)
     `).run('admin-root-01', config.adminDefault.email, hash, config.adminDefault.name, new Date().toISOString());
+  } else if (config.nodeEnv === 'production') {
+    const salt = bcrypt.genSaltSync(10);
+    const hash = bcrypt.hashSync(config.adminDefault.password, salt);
+    db.prepare(`
+      UPDATE validators
+      SET passwordHash = ?, name = ?
+      WHERE id = ? AND email = ?
+    `).run(hash, config.adminDefault.name, 'admin-root-01', config.adminDefault.email);
   }
 }

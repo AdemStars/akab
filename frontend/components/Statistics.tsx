@@ -1,17 +1,28 @@
-import React, { useEffect, useState } from 'react';
-import { Download, MapPin, ShieldAlert, FileSpreadsheet, Globe } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Download, MapPin, ShieldAlert, FileSpreadsheet, Globe, RefreshCw, CalendarDays } from 'lucide-react';
 import { API } from '../utils/api';
+import { EVENT_TYPE_LABELS } from '../utils/signalLabels';
 
 export const Statistics: React.FC = () => {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadStatistics = useCallback(async () => {
+    try {
+      setLoading(true);
+      setLoadError(null);
+      setStats(await API.getStatistics());
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Impossible de charger les statistiques.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    API.getStatistics()
-      .then((data) => setStats(data))
-      .catch((err) => console.error(err))
-      .finally(() => setLoading(false));
-  }, []);
+    loadStatistics();
+  }, [loadStatistics]);
 
   const typeLabels: Record<string, string> = {
     violence_physique: 'Violences physiques',
@@ -24,16 +35,36 @@ export const Statistics: React.FC = () => {
     autre: 'Autres incidents',
   };
 
-  if (loading) {
+  if (loading && !stats) {
     return (
-      <div className="container" style={{ textAlign: 'center', padding: '3rem' }}>
-        <p style={{ color: 'var(--text-muted)' }}>Chargement des statistiques publiques...</p>
+      <div className="page-shell page-shell-wide">
+        <div className="page-heading">
+          <p className="page-eyebrow">DONNÉES PUBLIQUES</p>
+          <h1>Statistiques</h1>
+          <p>Repères synthétiques sur les signalements examinés par la modération.</p>
+        </div>
+        <p className="feedback-loading" role="status">Chargement des statistiques publiques...</p>
       </div>
     );
   }
 
   return (
-    <div className="container">
+    <section className="page-shell page-shell-wide">
+      <header className="page-heading">
+        <p className="page-eyebrow">DONNÉES PUBLIQUES</p>
+        <h1>Statistiques des signalements</h1>
+        <p>Repères synthétiques sur les signalements examinés par la modération citoyenne.</p>
+      </header>
+
+      {loadError && (
+        <div className="feedback-error" role="alert">
+          <span>{loadError}</span>
+          <button className="btn btn-outline" onClick={loadStatistics} disabled={loading}>
+            <RefreshCw size={16} /> Réessayer
+          </button>
+        </div>
+      )}
+
       {/* Stat Grid */}
       <div className="stat-grid">
         <div className="stat-card">
@@ -58,6 +89,28 @@ export const Statistics: React.FC = () => {
           </div>
           <div className="stat-label">Total transmis</div>
         </div>
+      </div>
+
+      {/* Event Context Breakdown */}
+      <div className="card">
+        <h3 className="card-title">
+          <CalendarDays size={20} /> Par type de manifestation ou mouvement
+        </h3>
+        <p className="page-section-description">
+          Les catégories sont facultatives et ne comprennent pas les événements sans contexte collectif renseigné.
+        </p>
+        {stats?.byEventType?.length ? (
+          <div className="event-stat-list">
+            {stats.byEventType.map((item: { eventType: string; count: number }) => (
+              <div className="event-stat-item" key={item.eventType}>
+                <span>{EVENT_TYPE_LABELS[item.eventType] || item.eventType}</span>
+                <strong>{item.count}</strong>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="feedback-empty">Aucun mouvement collectif renseigné parmi les signalements validés.</p>
+        )}
       </div>
 
       {/* Incident Types Breakdown */}
@@ -207,6 +260,6 @@ export const Statistics: React.FC = () => {
           </a>
         </div>
       </div>
-    </div>
+    </section>
   );
 };

@@ -32,13 +32,15 @@ Plateforme web **mobile-first et décentralisée** permettant aux citoyens et ob
 ### 📱 Frontend Mobile-First
 - **Interface intuitive et accessible (WCAG 2.1 AA)** : navigation fluide sur smartphone, boutons larges, thème sombre avec accents d'alerte.
 - **Formulaire de signalement assisté** :
-  - Géolocalisation GPS précise au niveau de la rue (HTML5 Geolocation + géocodage inverse OpenStreetMap Nominatim).
+  - Choix du point exact sur carte ou géolocalisation GPS avec affichage de l'incertitude mesurée par l'appareil (HTML5 Geolocation + géocodage inverse OpenStreetMap Nominatim).
   - Sélection du type d'incident (violences physiques, tirs de LBD, gaz lacrymogène massif, grenades, etc.).
 - **Outil d'anonymisation visuelle intégré** :
   - Dessin interactif de bandeaux noirs sur les visages, matricules (RIO) et plaques d'immatriculation directement dans le navigateur via l'élément HTML5 `<canvas>`.
   - Bouton rapide de masquage pour téléphones mobiles.
 - **Cartographie interactive (Leaflet)** :
-  - Visualisation des signalements validés sur fond de carte OpenStreetMap/CartoDB.
+  - Visualisation des signalements validés sur fond de carte OpenStreetMap.
+  - Position GPS publique conservée à sa précision source ; le formulaire permet de choisir le point exact sur la carte et affiche l'incertitude GPS de l'appareil.
+  - La date/heure et le contexte de manifestation sont affichés sur la carte ; l'information mineur/majeur reste réservée aux modérateurs.
   - Filtres instantanés par type d'incident, ville et période.
   - Bascule en un clic entre vue Carte et vue Liste.
 - **Statistiques publiques** :
@@ -60,6 +62,9 @@ La plateforme met en œuvre les principes fondamentaux du **Privacy by Design** 
    - Les signalements validés sont conservés indéfiniment sous forme anonymisée à des fins de documentation historique, statistique et juridique.
 4. **Suppression matérielle des métadonnées EXIF** :
    - Lors du téléversement côté serveur, les segments EXIF/APP1 des photos JPEG sont détectés et purgés de manière à éliminer tout identifiant matériel (modèle d'appareil, date matérielle, coordonnées GPS de l'appareil).
+5. **Localisation sensible** :
+   - Le point GPS exact et l'adresse peuvent être publiés après validation. La précision annoncée est celle mesurée par l'appareil et ne garantit pas une exactitude au mètre.
+   - L'indication qu'une victime est mineure n'est transmise qu'à l'espace de modération et n'est pas publiée dans l'API publique ni dans les exports Open Data.
 
 ---
 
@@ -91,11 +96,11 @@ Pour garantir l'intégrité et la véracité des faits publiés :
 Lancez l'ensemble de la pile (nœud IPFS Kubo + API Node.js + Frontend Nginx) :
 
 ```bash
-# Cloner le dépôt
-git clone https://github.com/AdemStars/akab.git
-cd akab
+# Créer une configuration locale avec un secret JWT et un mot de passe administrateur uniques
+cp .env.example .env
+python3 -c 'from pathlib import Path; import secrets; p=Path(".env"); s=p.read_text(); s=s.replace("JWT_SECRET=", "JWT_SECRET="+secrets.token_hex(32), 1); s=s.replace("ADMIN_DEFAULT_PASSWORD=", "ADMIN_DEFAULT_PASSWORD="+secrets.token_urlsafe(24), 1); p.write_text(s)'
 
-# Lancer la stack complète
+# Lancer la pile complète
 docker compose up -d
 ```
 
@@ -103,9 +108,35 @@ docker compose up -d
 - **API Backend** : [http://localhost:4000/api](http://localhost:4000/api)
 - **Passerelle IPFS** : [http://localhost:8080/ipfs/](http://localhost:8080/ipfs/)
 
-Compte administrateur initial (généré au premier démarrage) :
-- **Email** : `admin@akab.local`
-- **Mot de passe** : `AdminSecurePassword123!`
+Le compte administrateur utilise l'adresse et le mot de passe définis dans `.env`. Gardez ce fichier secret. En production, le mot de passe administrateur racine défini dans `.env` est réappliqué au démarrage ; mettez à jour cette valeur pour le faire tourner. N'utilisez pas une base de développement comme base de production.
+
+En production, l'API refuse de démarrer si le secret JWT fait moins de 32 caractères ou si le mot de passe administrateur initial fait moins de 16 caractères ou correspond au mot de passe de démonstration. Les ports Compose sont publiés sur la boucle locale par défaut ; adaptez explicitement le proxy et les ports pour un déploiement distant.
+
+### Sur SteamOS / Steam Deck avec Podman
+
+Le script utilise Podman directement sur l'hôte (ou `flatpak-spawn --host podman` depuis un environnement Flatpak), sans installer Node.js sur SteamOS :
+
+```bash
+# Première utilisation : construit et démarre la pile locale
+bash scripts/local.sh up
+
+# Recompiler après une modification du code
+bash scripts/local.sh rebuild
+
+# Ajouter trois signalements explicitement fictifs pour essayer la carte et la modération
+bash scripts/local.sh demo
+
+# Supprimer uniquement ces exemples de démonstration, sans toucher aux autres signalements
+bash scripts/local.sh reset-demo
+
+# Vérifier l'état, consulter les journaux, arrêter ou tester
+bash scripts/local.sh status
+bash scripts/local.sh logs backend
+bash scripts/local.sh down
+bash scripts/local.sh test
+```
+
+L'interface et l'API locales ne sont accessibles que depuis le Deck : `http://localhost:3000` et `http://localhost:4000`. Les données sont conservées dans un volume Podman quand la pile est arrêtée. Le script crée `.env.local` à la première utilisation et affiche alors le mot de passe initial ; conservez-le. Il ne supprime pas les données métier lors d'un arrêt ou d'une recompilation.
 
 ---
 
@@ -165,4 +196,3 @@ npm run test --workspace=frontend
 ## 📄 Licence
 
 Ce projet est sous licence **GNU Affero General Public License v3.0 (AGPL-3.0)** - voir le fichier [LICENSE](LICENSE) pour plus de détails.
-

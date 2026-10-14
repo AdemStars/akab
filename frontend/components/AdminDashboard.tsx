@@ -8,8 +8,14 @@ import {
   LogOut,
   ExternalLink,
 } from 'lucide-react';
-import { API, Signal } from '../utils/api';
+import { API, ApiError, Signal } from '../utils/api';
 import { formatIpfsGatewayUrl } from '../utils/ipfs';
+import {
+  EVENT_TYPE_LABELS,
+  formatGpsAccuracy,
+  formatGpsCoordinates,
+  VICTIM_AGE_GROUP_LABELS,
+} from '../utils/signalLabels';
 
 export const AdminDashboard: React.FC = () => {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('akab_admin_token'));
@@ -23,7 +29,7 @@ export const AdminDashboard: React.FC = () => {
 
   // Login form state
   const [email, setEmail] = useState('admin@akab.local');
-  const [password, setPassword] = useState('AdminSecurePassword123!');
+  const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
 
@@ -38,6 +44,7 @@ export const AdminDashboard: React.FC = () => {
   const [rejectReason, setRejectReason] = useState('');
   const [validatorsList, setValidatorsList] = useState<any[]>([]);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,10 +70,20 @@ export const AdminDashboard: React.FC = () => {
     localStorage.removeItem('akab_admin_user');
   };
 
+  const handleDashboardError = (err: unknown, fallback: string) => {
+    if (err instanceof ApiError && err.status === 401) {
+      handleLogout();
+      setLoginError('Votre session a expiré. Veuillez vous reconnecter.');
+      return;
+    }
+    setDashboardError(err instanceof Error ? err.message : fallback);
+  };
+
   const loadSignals = async () => {
     if (!token) return;
     try {
       setLoadingSignals(true);
+      setDashboardError(null);
       if (statusTab === 'validators') {
         const valRes = await API.getValidators(token);
         setValidatorsList(valRes.validators || []);
@@ -74,8 +91,8 @@ export const AdminDashboard: React.FC = () => {
         const res = await API.getAdminSignals(token, statusTab, searchTerm);
         setSignals(res.signals || []);
       }
-    } catch (err: any) {
-      console.error(err);
+    } catch (err) {
+      handleDashboardError(err, 'Impossible de charger les données de modération.');
     } finally {
       setLoadingSignals(false);
     }
@@ -97,8 +114,8 @@ export const AdminDashboard: React.FC = () => {
       }
       setTimeout(() => setActionSuccess(null), 4000);
       loadSignals();
-    } catch (err: any) {
-      alert(err.message || 'Erreur de validation');
+    } catch (err) {
+      handleDashboardError(err, 'Erreur de validation.');
     }
   };
 
@@ -111,15 +128,20 @@ export const AdminDashboard: React.FC = () => {
       setRejectReason('');
       setTimeout(() => setActionSuccess(null), 4000);
       loadSignals();
-    } catch (err: any) {
-      alert(err.message || 'Erreur lors du rejet');
+    } catch (err) {
+      handleDashboardError(err, 'Erreur lors du rejet.');
     }
   };
 
   // Login View
   if (!token) {
     return (
-      <div className="container" style={{ maxWidth: '420px', marginTop: '2rem' }}>
+      <section className="page-shell page-shell-narrow">
+        <header className="page-heading">
+          <p className="page-eyebrow">ESPACE SÉCURISÉ</p>
+          <h1>Modération citoyenne</h1>
+          <p>Examinez les signalements et décidez de leur publication.</p>
+        </header>
         <div className="card">
           <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
             <ShieldCheck size={48} style={{ color: 'var(--primary-red)', margin: '0 auto 0.5rem' }} />
@@ -146,6 +168,7 @@ export const AdminDashboard: React.FC = () => {
               <input
                 type="password"
                 className="form-input"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -153,7 +176,7 @@ export const AdminDashboard: React.FC = () => {
             </div>
 
             {loginError && (
-              <div style={{ color: '#ff6b6b', fontSize: '0.85rem', marginBottom: '1rem' }}>
+              <div className="feedback-error" role="alert">
                 ⚠️ {loginError}
               </div>
             )}
@@ -163,12 +186,17 @@ export const AdminDashboard: React.FC = () => {
             </button>
           </form>
         </div>
-      </div>
+      </section>
     );
   }
 
   return (
-    <div className="container">
+    <section className="page-shell page-shell-wide">
+      <header className="page-heading">
+        <p className="page-eyebrow">ESPACE SÉCURISÉ</p>
+        <h1>Modération citoyenne</h1>
+        <p>Examinez les éléments, le contexte et la localisation avant chaque décision de publication.</p>
+      </header>
       {/* Top Moderator Card */}
       <div
         className="card"
@@ -204,6 +232,15 @@ export const AdminDashboard: React.FC = () => {
           }}
         >
           ✓ {actionSuccess}
+        </div>
+      )}
+
+      {dashboardError && (
+        <div className="feedback-error" role="alert">
+          <span>{dashboardError}</span>
+          <button className="btn btn-outline" onClick={loadSignals} disabled={loadingSignals}>
+            <RefreshCw size={16} /> Réessayer
+          </button>
         </div>
       )}
 
@@ -273,10 +310,24 @@ export const AdminDashboard: React.FC = () => {
                       <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>{sig.title}</h3>
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0' }}>
                         ID: #{sig.id} | 📅 {new Date(sig.incidentDate).toLocaleString('fr-FR')} | 📍 {sig.city} ({sig.department})
+                        <br />
+                        GPS : {formatGpsCoordinates(sig.latitude, sig.longitude)}
+                        {formatGpsAccuracy(sig.locationAccuracyMeters) &&
+                          ` · précision mesurée ${formatGpsAccuracy(sig.locationAccuracyMeters)}`}
                       </div>
                     </div>
                     <span className={`badge ${sig.status === 'validated' ? 'badge-green' : sig.status === 'under_appeal' ? 'badge-yellow' : 'badge-red'}`}>
                       {sig.status === 'under_appeal' ? 'RECOURS DÉPOSÉ' : sig.status}
+                    </span>
+                  </div>
+
+                  <div className="admin-signal-context">
+                    <span>
+                      Mouvement : {EVENT_TYPE_LABELS[sig.eventType] || sig.eventType}
+                      {sig.eventName ? ` · ${sig.eventName}` : ''}
+                    </span>
+                    <span>
+                      Victime : {VICTIM_AGE_GROUP_LABELS[sig.victimAgeGroup || 'unknown'] || 'Âge non connu'}
                     </span>
                   </div>
 
@@ -435,6 +486,6 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 };

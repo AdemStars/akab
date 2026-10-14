@@ -13,6 +13,18 @@ export type IncidentType =
 
 export type SignalStatus = 'pending' | 'validated' | 'rejected' | 'under_appeal';
 
+export type EventType =
+  | 'none'
+  | 'demonstration'
+  | 'march'
+  | 'rally'
+  | 'strike'
+  | 'blockade'
+  | 'occupation'
+  | 'other';
+
+export type VictimAgeGroup = 'minor' | 'adult' | 'mixed' | 'unknown';
+
 export interface EvidenceItem {
   id: string;
   cid: string;
@@ -30,8 +42,12 @@ export interface SignalRecord {
   description: string;
   incidentDate: string;
   incidentType: IncidentType;
+  eventType: EventType;
+  eventName: string | null;
+  victimAgeGroup: VictimAgeGroup;
   latitude: number;
   longitude: number;
+  locationAccuracyMeters: number | null;
   address: string | null;
   city: string | null;
   postalCode: string | null;
@@ -54,13 +70,19 @@ export interface SignalRecord {
   retentionExpiresAt: string;
 }
 
+export type PublicSignalRecord = Omit<SignalRecord, 'victimAgeGroup'>;
+
 export interface CreateSignalInput {
   title: string;
   description: string;
   incidentDate: string;
   incidentType: IncidentType;
+  eventType?: EventType;
+  eventName?: string;
+  victimAgeGroup?: VictimAgeGroup;
   latitude: number;
   longitude: number;
+  locationAccuracyMeters?: number;
   address?: string;
   city?: string;
   postalCode?: string;
@@ -88,13 +110,15 @@ export class SignalModel {
     db.prepare(`
       INSERT INTO signals (
         id, title, description, incidentDate, incidentType,
-        latitude, longitude, address, city, postalCode, department,
+        eventType, eventName, victimAgeGroup, latitude, longitude, locationAccuracyMeters,
+        address, city, postalCode, department,
         evidence, status, validationScore, trustPointsAwarded,
         reporterEmail, reporterPhone, forgetToken,
         createdAt, updatedAt, retentionExpiresAt
       ) VALUES (
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
         ?, 'pending', 0, 0,
         ?, ?, ?,
         ?, ?, ?
@@ -105,8 +129,12 @@ export class SignalModel {
       input.description,
       input.incidentDate,
       input.incidentType,
+      input.eventType || 'none',
+      input.eventName || null,
+      input.victimAgeGroup || 'unknown',
       input.latitude,
       input.longitude,
+      input.locationAccuracyMeters ?? null,
       input.address || null,
       input.city || null,
       input.postalCode || null,
@@ -145,7 +173,7 @@ export class SignalModel {
     department?: string;
     limit?: number;
     offset?: number;
-  }): { signals: SignalRecord[]; total: number } {
+  }): { signals: PublicSignalRecord[]; total: number } {
     const db = getDatabase();
     const clauses: string[] = ["status = 'validated'"];
     const params: any[] = [];
@@ -333,6 +361,14 @@ export class SignalModel {
       ORDER BY count DESC
     `).all() as { incidentType: string; count: number }[];
 
+    const byEventType = db.prepare(`
+      SELECT eventType, COUNT(*) as count
+      FROM signals
+      WHERE status = 'validated' AND eventType != 'none'
+      GROUP BY eventType
+      ORDER BY count DESC
+    `).all() as { eventType: EventType; count: number }[];
+
     const byDepartment = db.prepare(`
       SELECT COALESCE(department, 'Non renseigné') as department, COUNT(*) as count
       FROM signals
@@ -366,6 +402,7 @@ export class SignalModel {
       totalPending,
       totalAppeals,
       byType,
+      byEventType,
       byDepartment,
       byCity,
       monthlyTimeline: monthlyTimeline.reverse(),
@@ -379,8 +416,12 @@ export class SignalModel {
       description: row.description,
       incidentDate: row.incidentDate,
       incidentType: row.incidentType as IncidentType,
+      eventType: row.eventType as EventType,
+      eventName: row.eventName,
+      victimAgeGroup: row.victimAgeGroup as VictimAgeGroup,
       latitude: row.latitude,
       longitude: row.longitude,
+      locationAccuracyMeters: row.locationAccuracyMeters,
       address: row.address,
       city: row.city,
       postalCode: row.postalCode,
@@ -404,9 +445,10 @@ export class SignalModel {
     };
   }
 
-  static sanitizePublic(signal: SignalRecord): SignalRecord {
+  static sanitizePublic(signal: SignalRecord): PublicSignalRecord {
+    const { victimAgeGroup: _victimAgeGroup, ...publicSignal } = signal;
     return {
-      ...signal,
+      ...publicSignal,
       reporterEmail: null,
       reporterPhone: null,
       forgetToken: '', // Redacted

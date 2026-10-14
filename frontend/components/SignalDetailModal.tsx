@@ -2,6 +2,7 @@ import React from 'react';
 import { X, ExternalLink, ShieldCheck } from 'lucide-react';
 import { Signal } from '../utils/api';
 import { formatIpfsGatewayUrl } from '../utils/ipfs';
+import { EVENT_TYPE_LABELS, formatGpsAccuracy, formatGpsCoordinates } from '../utils/signalLabels';
 
 interface SignalDetailModalProps {
   signal: Signal | null;
@@ -10,6 +11,7 @@ interface SignalDetailModalProps {
 
 export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, onClose }) => {
   if (!signal) return null;
+  const gpsAccuracy = formatGpsAccuracy(signal.locationAccuracyMeters);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -29,7 +31,16 @@ export const SignalDetailModal: React.FC<SignalDetailModalProps> = ({ signal, on
         <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
           <div>📅 Date des faits : {new Date(signal.incidentDate).toLocaleString('fr-FR')}</div>
           <div>📍 Localisation : {signal.address ? `${signal.address}, ` : ''}{signal.city} ({signal.department})</div>
-          <div>🌐 Coordonnées GPS : {signal.latitude.toFixed(5)}, {signal.longitude.toFixed(5)}</div>
+          <div>🌐 Coordonnées GPS : {formatGpsCoordinates(signal.latitude, signal.longitude)}</div>
+          {gpsAccuracy && (
+            <div>Précision GPS estimée au dépôt : {gpsAccuracy}</div>
+          )}
+          {signal.eventType && signal.eventType !== 'none' && (
+            <div>
+              🚩 Contexte : {EVENT_TYPE_LABELS[signal.eventType] || signal.eventType}
+              {signal.eventName ? ` · ${signal.eventName}` : ''}
+            </div>
+          )}
         </div>
 
         <div style={{ marginBottom: '1.25rem' }}>

@@ -2,7 +2,13 @@ import React, { useState } from 'react';
 import { MapPin, Navigation, Send, AlertCircle, Shield, CheckCircle2, Lock, Copy } from 'lucide-react';
 import { getCurrentGPSPosition, reverseGeocode } from '../utils/geolocation';
 import { PhotoUpload, UploadedEvidence } from './PhotoUpload';
+import { LocationPicker } from './LocationPicker';
 import { API } from '../utils/api';
+
+function toLocalDateTimeInput(date: Date): string {
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 16);
+}
 
 interface SignalFormProps {
   onSuccess: (signalId: string, forgetToken: string) => void;
@@ -11,14 +17,14 @@ interface SignalFormProps {
 export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [incidentDate, setIncidentDate] = useState(() => {
-    const now = new Date();
-    // format as YYYY-MM-DDTHH:mm
-    return now.toISOString().slice(0, 16);
-  });
+  const [incidentDate, setIncidentDate] = useState(() => toLocalDateTimeInput(new Date()));
   const [incidentType, setIncidentType] = useState('violence_physique');
+  const [eventType, setEventType] = useState('none');
+  const [eventName, setEventName] = useState('');
+  const [victimAgeGroup, setVictimAgeGroup] = useState('unknown');
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
+  const [locationAccuracyMeters, setLocationAccuracyMeters] = useState<number | null>(null);
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
   const [postalCode, setPostalCode] = useState('');
@@ -42,6 +48,7 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
       const coords = await getCurrentGPSPosition();
       setLatitude(coords.latitude);
       setLongitude(coords.longitude);
+      setLocationAccuracyMeters(coords.accuracy ?? null);
 
       // Perform reverse geocoding to prefill street address and city
       const geoAddr = await reverseGeocode(coords.latitude, coords.longitude);
@@ -58,12 +65,18 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
     }
   };
 
+  const handleCoordinateChange = (nextLatitude: number | null, nextLongitude: number | null) => {
+    setLatitude(nextLatitude);
+    setLongitude(nextLongitude);
+    setLocationAccuracyMeters(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
     if (latitude === null || longitude === null) {
-      setFormError('La géolocalisation GPS est requise pour positionner l’incident sur la carte.');
+      setFormError('Choisissez un point sur la carte ou saisissez les coordonnées du lieu.');
       return;
     }
 
@@ -79,8 +92,12 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
         description,
         incidentDate: new Date(incidentDate).toISOString(),
         incidentType,
+        eventType,
+        eventName: eventName.trim() || undefined,
+        victimAgeGroup,
         latitude,
         longitude,
+        locationAccuracyMeters: locationAccuracyMeters ?? undefined,
         address: address || undefined,
         city: city || undefined,
         postalCode: postalCode || undefined,
@@ -114,13 +131,18 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
 
   if (submittedData) {
     return (
-      <div className="card" style={{ textAlign: 'center', padding: '2rem 1rem' }}>
-        <CheckCircle2 size={56} style={{ color: 'var(--accent-green)', margin: '0 auto 1rem' }} />
-        <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Signalement envoyé avec succès !</h2>
-        <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
-          Votre signalement porte l'identifiant <strong>#{submittedData.signalId}</strong>. Il est désormais en
-          cours d'examen par notre collège de modération citoyenne.
-        </p>
+      <section className="page-shell page-shell-wide">
+        <header className="page-heading">
+          <p className="page-eyebrow">SIGNALEMENT CITOYEN</p>
+          <h1>Votre signalement</h1>
+        </header>
+        <div className="card report-success">
+          <CheckCircle2 size={56} style={{ color: 'var(--accent-green)', margin: '0 auto 1rem' }} />
+          <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Signalement envoyé avec succès !</h2>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+            Votre signalement porte l'identifiant <strong>#{submittedData.signalId}</strong>. Il est désormais en
+            cours d'examen par notre collège de modération citoyenne.
+          </p>
 
         <div
           style={{
@@ -166,34 +188,45 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
           </div>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => {
-            setSubmittedData(null);
-            setTitle('');
-            setDescription('');
-            setEvidenceList([]);
-            setLatitude(null);
-            setLongitude(null);
-          }}
-        >
-          Effectuer un autre signalement
-        </button>
-      </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              setSubmittedData(null);
+              setTitle('');
+              setDescription('');
+              setEvidenceList([]);
+              setLatitude(null);
+              setLongitude(null);
+              setLocationAccuracyMeters(null);
+              setEventType('none');
+              setEventName('');
+              setVictimAgeGroup('unknown');
+            }}
+          >
+            Effectuer un autre signalement
+          </button>
+        </div>
+      </section>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <section className="page-shell page-shell-wide">
+      <header className="page-heading">
+        <p className="page-eyebrow">SIGNALEMENT CITOYEN</p>
+        <h1>Documenter un fait</h1>
+        <p>Renseignez le lieu, la date et les éléments utiles à l’examen du signalement.</p>
+      </header>
+      <form className="report-form" onSubmit={handleSubmit}>
       {/* Geolocation Section */}
       <div className="card">
         <h3 className="card-title">
           <MapPin size={20} /> 1. Géolocalisation précise (Rue / GPS)
         </h3>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-          La géolocalisation exacte permet d'agréger les violences par zone et d'alimenter la cartographie
-          publique.
+        <p className="location-privacy-notice">
+          Après validation, le point GPS exact sera visible sur la carte publique. Le cercle indique la marge
+          d’erreur estimée par votre appareil ; il ne garantit pas une précision au mètre.
         </p>
 
         <button
@@ -207,29 +240,48 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
           {loadingGps ? 'Détection GPS en cours...' : 'Activer la géolocalisation GPS'}
         </button>
 
+        {locationAccuracyMeters !== null && (
+          <p className="location-accuracy" role="status">
+            Précision GPS estimée : ±{Math.round(locationAccuracyMeters)} m
+          </p>
+        )}
+
+        <LocationPicker
+          latitude={latitude}
+          longitude={longitude}
+          accuracyMeters={locationAccuracyMeters}
+          onChange={(nextLatitude, nextLongitude) => handleCoordinateChange(nextLatitude, nextLongitude)}
+        />
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
           <div className="form-group">
-            <label className="form-label">Latitude *</label>
+            <label className="form-label" htmlFor="signal-latitude">Latitude *</label>
             <input
+              id="signal-latitude"
               type="number"
               step="any"
+              min={-90}
+              max={90}
               className="form-input"
               placeholder="ex: 48.8566"
               value={latitude !== null ? latitude : ''}
-              onChange={(e) => setLatitude(parseFloat(e.target.value) || null)}
+              onChange={(e) => handleCoordinateChange(e.target.value === '' ? null : Number(e.target.value), longitude)}
               required
             />
           </div>
 
           <div className="form-group">
-            <label className="form-label">Longitude *</label>
+            <label className="form-label" htmlFor="signal-longitude">Longitude *</label>
             <input
+              id="signal-longitude"
               type="number"
               step="any"
+              min={-180}
+              max={180}
               className="form-input"
               placeholder="ex: 2.3522"
               value={longitude !== null ? longitude : ''}
-              onChange={(e) => setLongitude(parseFloat(e.target.value) || null)}
+              onChange={(e) => handleCoordinateChange(latitude, e.target.value === '' ? null : Number(e.target.value))}
               required
             />
           </div>
@@ -321,6 +373,56 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
         </div>
 
         <div className="form-group">
+          <label className="form-label" htmlFor="signal-event-type">Type de manifestation ou mouvement</label>
+          <select
+            id="signal-event-type"
+            className="form-select"
+            value={eventType}
+            onChange={(e) => setEventType(e.target.value)}
+          >
+            <option value="none">Aucun événement collectif / non concerné</option>
+            <option value="demonstration">Manifestation</option>
+            <option value="march">Marche</option>
+            <option value="rally">Rassemblement</option>
+            <option value="strike">Grève</option>
+            <option value="blockade">Blocage</option>
+            <option value="occupation">Occupation</option>
+            <option value="other">Autre mouvement</option>
+          </select>
+        </div>
+
+        {eventType !== 'none' && (
+          <div className="form-group">
+            <label className="form-label" htmlFor="signal-event-name">Nom ou précision sur le mouvement (facultatif)</label>
+            <input
+              id="signal-event-name"
+              type="text"
+              className="form-input"
+              maxLength={120}
+              placeholder="Ex. : rassemblement contre la réforme..."
+              value={eventName}
+              onChange={(e) => setEventName(e.target.value)}
+            />
+          </div>
+        )}
+
+        <div className="form-group">
+          <label className="form-label" htmlFor="signal-victim-age">La ou les victimes étaient-elles mineures ?</label>
+          <select
+            id="signal-victim-age"
+            className="form-select"
+            value={victimAgeGroup}
+            onChange={(e) => setVictimAgeGroup(e.target.value)}
+          >
+            <option value="unknown">Je ne sais pas / je préfère ne pas préciser</option>
+            <option value="minor">Au moins une victime mineure</option>
+            <option value="adult">Victime(s) majeure(s) uniquement</option>
+            <option value="mixed">Victimes mineures et majeures</option>
+          </select>
+          <div className="form-help">Cette information est visible uniquement par les modérateurs, pas sur la carte publique.</div>
+        </div>
+
+        <div className="form-group">
           <label className="form-label">Récit détaillé de l'incident *</label>
           <textarea
             className="form-textarea"
@@ -390,7 +492,9 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
             required
           />
           <label htmlFor="gdpr" style={{ fontSize: '0.85rem', color: 'var(--text-main)', cursor: 'pointer' }}>
-            J'accepte que ce signalement soit examiné et publié sous forme anonymisée sur la plateforme AKAB. J'ai
+            J'accepte que ce signalement soit examiné et publié sur la plateforme AKAB. Après validation, sa
+            date, son type d’incident, le contexte du mouvement et son point GPS exact pourront apparaître sur
+            la carte publique. Le statut mineur/majeur reste réservé aux modérateurs. J'ai
             bien noté que mes coordonnées personnelles (email/téléphone) seront{' '}
             <strong>automatiquement et irréversiblement purgées au bout de 30 jours</strong>, et que je peux
             exercer mon <em>droit à l'oubli</em> à tout moment via mon jeton secret (Art. 17 RGPD).
@@ -400,6 +504,7 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
 
       {formError && (
         <div
+          role="alert"
           style={{
             backgroundColor: 'rgba(230, 57, 70, 0.2)',
             border: '1px solid var(--primary-red)',
@@ -423,6 +528,7 @@ export const SignalForm: React.FC<SignalFormProps> = ({ onSuccess }) => {
         <Send size={22} />
         {submitting ? 'Transmission sécurisée en cours...' : 'Envoyer le signalement'}
       </button>
-    </form>
+      </form>
+    </section>
   );
 };

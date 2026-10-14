@@ -11,6 +11,7 @@ export const AppealPage: React.FC = () => {
   const [appealReason, setAppealReason] = useState('');
   const [submittingAppeal, setSubmittingAppeal] = useState(false);
   const [appealSuccess, setAppealSuccess] = useState(false);
+  const [appealError, setAppealError] = useState<string | null>(null);
 
   const handleSearchSignal = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,18 +38,24 @@ export const AppealPage: React.FC = () => {
 
     try {
       setSubmittingAppeal(true);
+      setAppealError(null);
       await API.submitAppeal(signal.id, appealReason.trim());
       setAppealSuccess(true);
       setSignal({ ...signal, status: 'under_appeal', appealReason: appealReason.trim() });
-    } catch (err: any) {
-      alert(err.message || 'Erreur lors du dépôt du recours');
+    } catch (err) {
+      setAppealError(err instanceof Error ? err.message : 'Erreur lors du dépôt du recours.');
     } finally {
       setSubmittingAppeal(false);
     }
   };
 
   return (
-    <div className="container" style={{ maxWidth: '650px' }}>
+    <section className="page-shell page-shell-narrow">
+      <header className="page-heading">
+        <p className="page-eyebrow">ACCOMPAGNEMENT CITOYEN</p>
+        <h1>Droit de recours</h1>
+        <p>Consultez la décision et transmettez des éléments complémentaires pour demander un réexamen.</p>
+      </header>
       <div className="card">
         <h2 className="card-title">
           <HelpCircle size={22} /> Droit de Recours Citoyen
@@ -78,7 +85,7 @@ export const AppealPage: React.FC = () => {
         </form>
 
         {searchError && (
-          <div style={{ color: '#ff6b6b', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+          <div className="feedback-error" role="alert">
             ⚠️ {searchError}
           </div>
         )}
@@ -163,6 +170,8 @@ export const AppealPage: React.FC = () => {
                 />
               </div>
 
+              {appealError && <div className="feedback-error" role="alert">{appealError}</div>}
+
               <button type="submit" className="btn btn-primary btn-block" disabled={submittingAppeal}>
                 <Send size={18} />
                 {submittingAppeal ? 'Transmission...' : 'Déposer mon recours'}
@@ -187,6 +196,6 @@ export const AppealPage: React.FC = () => {
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 };

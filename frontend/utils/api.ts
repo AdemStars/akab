@@ -4,8 +4,12 @@ export interface Signal {
   description: string;
   incidentDate: string;
   incidentType: string;
+  eventType: string;
+  eventName: string | null;
+  victimAgeGroup?: string;
   latitude: number;
   longitude: number;
+  locationAccuracyMeters: number | null;
   address: string | null;
   city: string | null;
   postalCode: string | null;
@@ -38,6 +42,13 @@ export interface SignalFilters {
   department?: string;
   limit?: number;
   offset?: number;
+}
+
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
 const CACHE_KEY = 'akab_cached_signals';
@@ -176,7 +187,7 @@ export const API = {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Identifiants incorrects');
+      throw new ApiError(err.error || 'Identifiants incorrects', res.status);
     }
 
     return res.json();
@@ -191,7 +202,7 @@ export const API = {
       headers: { Authorization: 'Bearer ' + token },
     });
 
-    if (!res.ok) throw new Error('Erreur de chargement des signalements admin');
+    if (!res.ok) throw new ApiError('Erreur de chargement des signalements admin', res.status);
     return res.json();
   },
 
@@ -201,7 +212,7 @@ export const API = {
       headers: { Authorization: 'Bearer ' + token },
     });
 
-    if (!res.ok) throw new Error('Erreur lors de la validation');
+    if (!res.ok) throw new ApiError('Erreur lors de la validation', res.status);
     return res.json();
   },
 
@@ -215,7 +226,7 @@ export const API = {
       body: JSON.stringify({ reason }),
     });
 
-    if (!res.ok) throw new Error('Erreur lors du rejet');
+    if (!res.ok) throw new ApiError('Erreur lors du rejet', res.status);
     return res.json();
   },
 
@@ -223,7 +234,7 @@ export const API = {
     const res = await fetch('/api/admin/validators', {
       headers: { Authorization: 'Bearer ' + token },
     });
-    if (!res.ok) throw new Error('Erreur chargement modérateurs');
+    if (!res.ok) throw new ApiError('Erreur chargement modérateurs', res.status);
     return res.json();
   },
 };

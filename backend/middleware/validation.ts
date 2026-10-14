@@ -31,6 +31,12 @@ export const SignalSchema = z.object({
       required_error: "Le type d'incident est obligatoire",
     }
   ),
+  eventType: z.enum(
+    ['none', 'demonstration', 'march', 'rally', 'strike', 'blockade', 'occupation', 'other'],
+    { invalid_type_error: 'Le type de manifestation est invalide' }
+  ).default('none'),
+  eventName: z.string().trim().max(120, 'Le nom du mouvement ne peut excéder 120 caractères').optional(),
+  victimAgeGroup: z.enum(['minor', 'adult', 'mixed', 'unknown']).default('unknown'),
   latitude: z
     .number({ required_error: 'La latitude est obligatoire' })
     .min(-90)
@@ -39,6 +45,7 @@ export const SignalSchema = z.object({
     .number({ required_error: 'La longitude est obligatoire' })
     .min(-180)
     .max(180),
+  locationAccuracyMeters: z.number().finite().positive().max(100000).optional(),
   address: z.string().optional(),
   city: z.string().optional(),
   postalCode: z.string().optional(),
@@ -75,6 +82,9 @@ export function validateSignalInput(req: Request, res: Response, next: NextFunct
   }
   if (typeof req.body.longitude === 'string') {
     req.body.longitude = parseFloat(req.body.longitude);
+  }
+  if (typeof req.body.locationAccuracyMeters === 'string') {
+    req.body.locationAccuracyMeters = parseFloat(req.body.locationAccuracyMeters);
   }
   if (typeof req.body.gdprConsent === 'string') {
     req.body.gdprConsent = req.body.gdprConsent === 'true' || req.body.gdprConsent === '1';
