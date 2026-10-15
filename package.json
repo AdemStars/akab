@@ -23,6 +23,8 @@
     "local:rebuild": "bash scripts/local.sh rebuild",
     "local:demo": "bash scripts/local.sh demo",
     "local:reset-demo": "bash scripts/local.sh reset-demo",
+    "local:nodes": "bash scripts/local.sh nodes up",
+    "local:nodes:down": "bash scripts/local.sh nodes down",
     "local:test": "bash scripts/local.sh test",
     "test": "npm run test --workspace=backend && npm run test --workspace=frontend",
     "test:backend": "npm run test --workspace=backend",

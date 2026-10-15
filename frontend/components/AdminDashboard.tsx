@@ -11,6 +11,7 @@ import {
 import { API, ApiError, Signal } from '../utils/api';
 import { TeamPanel } from './TeamPanel';
 import { AuditPanel } from './AuditPanel';
+import { StoragePanel } from './StoragePanel';
 import { formatIpfsGatewayUrl } from '../utils/ipfs';
 import {
   EVENT_TYPE_LABELS,
@@ -37,7 +38,7 @@ export const AdminDashboard: React.FC = () => {
 
   // Dashboard state
   const [signals, setSignals] = useState<Signal[]>([]);
-  const [statusTab, setStatusTab] = useState<'pending' | 'under_appeal' | 'validated' | 'rejected' | 'validators' | 'team' | 'audit'>(
+  const [statusTab, setStatusTab] = useState<'pending' | 'under_appeal' | 'validated' | 'rejected' | 'validators' | 'team' | 'audit' | 'storage'>(
     'pending'
   );
   const [searchTerm, setSearchTerm] = useState('');
@@ -86,7 +87,7 @@ export const AdminDashboard: React.FC = () => {
     try {
       setLoadingSignals(true);
       setDashboardError(null);
-      if (statusTab === 'team' || statusTab === 'audit') {
+      if (statusTab === 'team' || statusTab === 'audit' || statusTab === 'storage') {
         return;
       }
       if (statusTab === 'validators') {
@@ -300,6 +301,12 @@ export const AdminDashboard: React.FC = () => {
             >
               Journal d'audit
             </button>
+            <button
+              className={`btn ${statusTab === 'storage' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setStatusTab('storage')}
+            >
+              Stockage
+            </button>
           </>
         )}
       </div>
@@ -307,6 +314,8 @@ export const AdminDashboard: React.FC = () => {
       {/* Signals Queue */}
       {statusTab === 'team' ? (
         <TeamPanel token={token} currentUserId={user?.id} onError={handleDashboardError} />
+      ) : statusTab === 'storage' ? (
+        <StoragePanel token={token} onError={handleDashboardError} />
       ) : statusTab === 'audit' ? (
         <AuditPanel token={token} onError={handleDashboardError} />
       ) : statusTab !== 'validators' ? (

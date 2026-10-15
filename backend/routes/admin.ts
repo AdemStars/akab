@@ -3,6 +3,7 @@ import { SignalModel } from '../models/Signal';
 import { AuditLog } from '../models/AuditLog';
 import { ModerationVoteModel } from '../models/ModerationVote';
 import { config } from '../config';
+import { StorageService, StorageUnavailableError } from '../services/storage';
 import { AdminValidatorModel } from '../models/AdminValidator';
 import { authenticate, requireRole } from '../middleware/auth';
 import { runGdprCleanup } from '../jobs/cleanup';
@@ -361,6 +362,55 @@ router.get('/audit', requireRole(['admin']), (req: Request, res: Response): void
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ error: 'Erreur de lecture du journal d’audit', message: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/storage
+ * Health of the encrypted storage nodes (Admin only).
+ */
+router.get('/storage', requireRole(['admin']), async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.json({ success: true, ...(await StorageService.status()) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erreur de lecture de l’état du stockage', message: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/storage/repair
+ * Re-replicate blobs to the nodes they belong on (Admin only).
+ */
+router.post('/storage/repair', requireRole(['admin']), async (req: Request, res: Response): Promise<void> => {
+  if (!StorageService.isEnabled()) {
+    res.status(409).json({ error: 'Aucun nœud de stockage configuré.' });
+    return;
+  }
+  try {
+    const report = await StorageService.repair();
+    AuditLog.record({ action: 'storage_repair', details: { ...report }, req });
+    res.json({ success: true, report });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erreur de réparation du stockage', message: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/storage/backup
+ * Encrypted database snapshot replicated on the nodes (Admin only).
+ */
+router.post('/storage/backup', requireRole(['admin']), async (req: Request, res: Response): Promise<void> => {
+  if (!StorageService.isEnabled()) {
+    res.status(409).json({ error: 'Aucun nœud de stockage configuré.' });
+    return;
+  }
+  try {
+    const report = await StorageService.backupDatabase();
+    AuditLog.record({ action: 'storage_backup', details: { blobId: report.blobId, storedOn: report.storedOn }, req });
+    res.json({ success: true, report });
+  } catch (err: any) {
+    const status = err instanceof StorageUnavailableError ? 503 : 500;
+    res.status(status).json({ error: 'Échec de la sauvegarde chiffrée', message: err.message });
   }
 });
 

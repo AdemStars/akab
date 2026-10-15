@@ -266,6 +266,18 @@ export const API = {
     return adminJson(token, `/api/admin/validators/${id}`, 'PATCH', changes);
   },
 
+  async getStorageStatus(token: string): Promise<any> {
+    return adminJson(token, '/api/admin/storage', 'GET');
+  },
+
+  async repairStorage(token: string): Promise<any> {
+    return adminJson(token, '/api/admin/storage/repair', 'POST', {});
+  },
+
+  async backupStorage(token: string): Promise<any> {
+    return adminJson(token, '/api/admin/storage/backup', 'POST', {});
+  },
+
   async getAuditLog(token: string, action?: string, offset = 0): Promise<any> {
     const params = new URLSearchParams({ limit: '50', offset: String(offset) });
     if (action) params.set('action', action);

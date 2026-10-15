@@ -3,6 +3,7 @@ import multer from 'multer';
 import { SignalModel, EvidenceItem } from '../models/Signal';
 import { UserModel } from '../models/User';
 import { ModerationVoteModel } from '../models/ModerationVote';
+import { StorageService, StorageUnavailableError } from '../services/storage';
 import { IpfsService } from '../services/ipfs';
 import { AnonymizationService } from '../services/anonymization';
 import { GdprService } from '../services/gdpr';
@@ -43,8 +44,19 @@ router.post(
       const sanitizedBuffer = AnonymizationService.stripExif(req.file.buffer, mimeType);
       const safeFilename = AnonymizationService.sanitizeFilename(originalName);
 
-      // Upload to IPFS
-      const ipfsResult = await IpfsService.upload(sanitizedBuffer, safeFilename, mimeType);
+      // Encrypted storage nodes when configured, IPFS / local content store otherwise
+      let ipfsResult: { cid: string; url: string; gatewayUrl: string; size: number };
+      if (StorageService.isEnabled()) {
+        const stored = await StorageService.store(sanitizedBuffer, { mimeType });
+        ipfsResult = {
+          cid: stored.ref,
+          url: `akab://${stored.ref.slice(5)}`,
+          gatewayUrl: `/api/ipfs/${stored.ref}`,
+          size: sanitizedBuffer.length,
+        };
+      } else {
+        ipfsResult = await IpfsService.upload(sanitizedBuffer, safeFilename, mimeType);
+      }
 
       const evidenceItem: EvidenceItem = {
         id: 'ev_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
@@ -64,6 +76,10 @@ router.post(
       });
     } catch (err: any) {
       console.error('[UPLOAD ERROR]', err);
+      if (err instanceof StorageUnavailableError) {
+        res.status(503).json({ error: 'Stockage temporairement indisponible, veuillez réessayer.' });
+        return;
+      }
       res.status(500).json({ error: 'Échec de l’envoi décentralisé vers IPFS', message: err.message });
     }
   }

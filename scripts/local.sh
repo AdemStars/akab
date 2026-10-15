@@ -9,6 +9,8 @@ BACKEND_CONTAINER="akab-backend-local"
 FRONTEND_CONTAINER="akab-frontend-local"
 BACKEND_IMAGE="akab-backend:local"
 FRONTEND_IMAGE="akab-frontend:local"
+NODE_IMAGE="akab-node:local"
+NODE_PREFIX="akab-node-local"
 
 run_podman() {
   if command -v podman >/dev/null 2>&1; then
@@ -106,6 +108,36 @@ start_services() {
   fi
 }
 
+node_containers() {
+  run_podman ps --all --filter "name=^${NODE_PREFIX}-" --format '{{.Names}}'
+}
+
+start_nodes() {
+  local count="$1"
+  ensure_local_env
+  ensure_network_and_volume
+  run_podman build --tag "$NODE_IMAGE" "$ROOT_DIR/storage-node"
+  local tokens
+  tokens="$(run_python "$ROOT_DIR/scripts/local_nodes.py" enable "$ENV_FILE" "$count")"
+  for index in $(seq 1 "$count"); do
+    local name="${NODE_PREFIX}-${index}"
+    local token
+    token="$(run_python -c 'import json,sys; print(json.loads(sys.argv[1])["tokens"]["local-"+sys.argv[2]])' "$tokens" "$index")"
+    if container_exists "$name"; then
+      run_podman rm --force "$name" >/dev/null
+    fi
+    run_podman run --detach \
+      --name "$name" \
+      --network "$NETWORK" \
+      --network-alias "$name" \
+      --env "NODE_TOKEN=$token" \
+      --volume "akab-node-local-data-${index}:/data" \
+      "$NODE_IMAGE" >/dev/null
+  done
+  remove_containers
+  start_services
+}
+
 case "${1:-up}" in
   up)
     ensure_local_env
@@ -131,6 +163,35 @@ case "${1:-up}" in
     build_images
     start_services
     echo "AKAB a été recompilé et redémarré sur http://localhost:3000."
+    ;;
+  nodes)
+    case "${2:-status}" in
+      up)
+        count="${3:-3}"
+        if ! [[ "$count" =~ ^[1-9]$ ]]; then
+          echo "Usage : $0 nodes up [1-9]" >&2
+          exit 2
+        fi
+        start_nodes "$count"
+        echo "$count nœud(s) de stockage chiffrés démarrés ; la clé de chiffrement est dans .env.local (à sauvegarder !)."
+        ;;
+      down)
+        for node in $(node_containers); do
+          run_podman rm --force "$node" >/dev/null
+        done
+        run_python "$ROOT_DIR/scripts/local_nodes.py" disable "$ENV_FILE"
+        remove_containers
+        start_services
+        echo "Nœuds arrêtés. Leurs volumes et la clé sont conservés ; les nouvelles preuves reviennent au stockage local."
+        ;;
+      status)
+        run_podman ps --all --filter "name=^${NODE_PREFIX}-"
+        ;;
+      *)
+        echo "Usage : $0 nodes [up [N]|down|status]" >&2
+        exit 2
+        ;;
+    esac
     ;;
   status)
     run_podman ps --filter "name=akab-"
@@ -167,7 +228,7 @@ case "${1:-up}" in
     run_podman run --rm --entrypoint npm akab-frontend-builder:local test
     ;;
   *)
-    echo "Usage : $0 {up|down|rebuild|status|logs [backend|frontend]|demo|reset-demo|test}" >&2
+    echo "Usage : $0 {up|down|rebuild|status|nodes [up [N]|down|status]|logs [backend|frontend]|demo|reset-demo|test}" >&2
     exit 2
     ;;
 esac

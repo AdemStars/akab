@@ -1,0 +1,16 @@
+# Nœud AKAB autonome : à déployer sur n'importe quelle machine (VPS, Raspberry Pi, NAS, serveur associatif…).
+#   NODE_TOKEN="$(openssl rand -hex 32)" docker compose up -d --build
+services:
+  akab-node:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${NODE_BIND:-0.0.0.0}:${NODE_PORT:-7000}:7000"
+    environment:
+      - "NODE_TOKEN=${NODE_TOKEN:?Définissez NODE_TOKEN (au moins 32 caractères)}"
+      - QUOTA_BYTES=${QUOTA_BYTES:-0}
+    volumes:
+      - node_data:/data
+
+volumes:
+  node_data:

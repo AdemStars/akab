@@ -92,6 +92,23 @@ Pour garantir l'intégrité et la véracité des faits publiés :
 
 ---
 
+## 🗄️ Stockage chiffré sur plusieurs nœuds
+
+Les preuves (photos, vidéos) et les sauvegardes de la base peuvent être répliquées sur des **nœuds de stockage**
+hébergeables n'importe où (VPS, NAS, Raspberry Pi, serveur associatif). Le backend chiffre tout avant l'envoi
+(AES-256-GCM) : les nœuds ne détiennent que des blocs opaques. Voir [storage-node/README.md](storage-node/README.md).
+
+```bash
+# Essai local : 3 nœuds Podman, clé et jetons générés dans .env.local
+bash scripts/local.sh nodes up 3
+bash scripts/local.sh nodes status
+bash scripts/local.sh nodes down     # retour au stockage local
+```
+
+Sans `STORAGE_NODES`, AKAB continue d'utiliser IPFS / le stockage local comme avant.
+
+---
+
 ## 🛠️ Démarrage rapide
 
 ### Avec Docker Compose (recommandé)

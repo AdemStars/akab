@@ -31,6 +31,62 @@ export function validateProductionSecrets(
 
 validateProductionSecrets(nodeEnv, configuredJwtSecret, configuredAdminPassword);
 
+export interface StorageNodeConfig {
+  name: string;
+  url: string;
+  token: string;
+}
+
+/** Parses STORAGE_NODES: a JSON array of { name, url, token } entries. */
+export function parseStorageNodes(raw: string | undefined): StorageNodeConfig[] {
+  if (!raw || !raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('STORAGE_NODES doit être un tableau JSON valide.');
+  }
+  if (!Array.isArray(parsed)) throw new Error('STORAGE_NODES doit être un tableau JSON.');
+  const names = new Set<string>();
+  return parsed.map((entry: any, index) => {
+    const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+    const token = typeof entry?.token === 'string' ? entry.token : '';
+    let url: URL;
+    try {
+      url = new URL(String(entry?.url));
+    } catch {
+      throw new Error(`STORAGE_NODES[${index}] : url invalide.`);
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/i.test(name)) {
+      throw new Error(`STORAGE_NODES[${index}] : nom invalide (lettres, chiffres, tirets).`);
+    }
+    if (names.has(name)) throw new Error(`STORAGE_NODES : nom en double « ${name} ».`);
+    names.add(name);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error(`STORAGE_NODES[${index}] : protocole http(s) requis.`);
+    }
+    if (token.length < 32) throw new Error(`STORAGE_NODES[${index}] : token d'au moins 32 caractères requis.`);
+    return { name, url: url.toString().replace(/\/$/, ''), token };
+  });
+}
+
+export function parseStorageKey(raw: string | undefined, nodes: StorageNodeConfig[]): Buffer | null {
+  const value = raw?.trim();
+  if (!value) {
+    if (nodes.length > 0) {
+      throw new Error('STORAGE_ENCRYPTION_KEY est obligatoire (64 caractères hexadécimaux) avec STORAGE_NODES.');
+    }
+    return null;
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(value)) {
+    throw new Error('STORAGE_ENCRYPTION_KEY doit contenir 64 caractères hexadécimaux (32 octets).');
+  }
+  return Buffer.from(value, 'hex');
+}
+
+const storageNodes = parseStorageNodes(process.env.STORAGE_NODES);
+const storageKey = parseStorageKey(process.env.STORAGE_ENCRYPTION_KEY, storageNodes);
+
 if (nodeEnv !== 'test' && nodeEnv !== 'production' && !configuredJwtSecret) {
   console.warn('[CONFIG] JWT_SECRET absent : une clé temporaire aléatoire est utilisée pour ce processus.');
 }
@@ -52,6 +108,15 @@ export const config = {
     email: process.env.ADMIN_DEFAULT_EMAIL || 'admin@akab.local',
     password: configuredAdminPassword || 'AdminSecurePassword123!',
     name: process.env.ADMIN_DEFAULT_NAME || 'Admin AKAB',
+  },
+  storage: {
+    nodes: storageNodes,
+    encryptionKey: storageKey,
+    replicas: Math.max(1, parseInt(process.env.STORAGE_REPLICAS || '2', 10) || 2),
+    writeQuorum: Math.max(1, parseInt(process.env.STORAGE_WRITE_QUORUM || '1', 10) || 1),
+    timeoutMs: parseInt(process.env.STORAGE_TIMEOUT_MS || '15000', 10) || 15000,
+    repairIntervalMinutes: parseInt(process.env.STORAGE_REPAIR_INTERVAL_MINUTES || '60', 10) || 0,
+    backupIntervalHours: parseInt(process.env.STORAGE_BACKUP_INTERVAL_HOURS || '24', 10) || 0,
   },
   moderation: {
     requiredApprovals: Math.max(1, parseInt(process.env.MODERATION_REQUIRED_APPROVALS || '2', 10) || 2),

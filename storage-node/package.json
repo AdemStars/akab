@@ -1,0 +1,13 @@
+{
+  "name": "akab-storage-node",
+  "version": "1.0.0",
+  "description": "Nœud de stockage AKAB : coffre de blocs chiffrés, sans dépendance",
+  "license": "AGPL-3.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/"
+  },
+  "engines": { "node": ">=18" }
+}

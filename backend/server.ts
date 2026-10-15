@@ -9,6 +9,8 @@ import exportRouter from './routes/export';
 import authRouter from './routes/auth';
 import { GdprService } from './services/gdpr';
 import { IpfsService } from './services/ipfs';
+import { StorageService, parseBlobRef } from './services/storage';
+import { startStorageJobs } from './jobs/storage';
 import { startCleanupJob } from './jobs/cleanup';
 import { rateLimitGeneral } from './middleware/rateLimit';
 
@@ -66,16 +68,46 @@ app.get('/api/gdpr/policy', (_req: Request, res: Response) => {
   });
 });
 
-// Local Content-Addressed IPFS Gateway fallback
-app.get('/api/ipfs/:cid', (req: Request, res: Response) => {
+// Evidence gateway: encrypted storage nodes (akab-<sha256>) or the local content-addressed store
+const SAFE_MEDIA_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+]);
+
+app.get('/api/ipfs/:cid', async (req: Request, res: Response) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+
+  if (parseBlobRef(req.params.cid)) {
+    try {
+      const blob = StorageService.isEnabled() ? await StorageService.retrieve(req.params.cid) : null;
+      if (!blob) {
+        res.status(404).json({ error: 'Contenu introuvable sur les nœuds de stockage' });
+        return;
+      }
+      const mimeType = typeof blob.meta.mimeType === 'string' ? blob.meta.mimeType.toLowerCase() : '';
+      if (!SAFE_MEDIA_TYPES.has(mimeType)) {
+        res.setHeader('Content-Disposition', 'attachment');
+      }
+      res.setHeader('Content-Type', SAFE_MEDIA_TYPES.has(mimeType) ? mimeType : 'application/octet-stream');
+      res.send(blob.data);
+    } catch {
+      res.status(503).json({ error: 'Stockage temporairement indisponible' });
+    }
+    return;
+  }
+
   const { buffer, exists } = IpfsService.getLocalFile(req.params.cid);
   if (!exists) {
     res.status(404).json({ error: 'Contenu IPFS non trouvé localement' });
     return;
   }
-  // Guess mime or fallback
   res.setHeader('Content-Type', 'image/jpeg');
-  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   res.send(buffer);
 });
 
@@ -118,6 +150,7 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 if (process.env.NODE_ENV !== 'test') {
   getDatabase();
   startCleanupJob();
+  startStorageJobs();
 
   app.listen(config.port, () => {
     console.log(`[AKAB SERVER] Plateforme AKAB active sur le port ${config.port}`);
