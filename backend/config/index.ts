@@ -31,13 +31,62 @@ export function validateProductionSecrets(
 
 validateProductionSecrets(nodeEnv, configuredJwtSecret, configuredAdminPassword);
 
-export interface StorageNodeConfig {
+interface StorageSourceBase {
   name: string;
+}
+
+/** An AKAB storage node (storage-node/), reached over HTTP(S). */
+export interface HttpNodeConfig extends StorageSourceBase {
+  type: 'http';
   url: string;
   token: string;
 }
 
-/** Parses STORAGE_NODES: a JSON array of { name, url, token } entries. */
+/** Any S3-compatible bucket: AWS S3, Backblaze B2, MinIO, Wasabi, Cloudflare R2… */
+export interface S3NodeConfig extends StorageSourceBase {
+  type: 's3';
+  endpoint: string;
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  prefix: string;
+  pathStyle: boolean;
+}
+
+/** A local or mounted directory: NAS share, USB drive, sshfs/rclone mount… */
+export interface DirectoryNodeConfig extends StorageSourceBase {
+  type: 'directory';
+  path: string;
+}
+
+export type StorageNodeConfig = HttpNodeConfig | S3NodeConfig | DirectoryNodeConfig;
+
+const NODE_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/i;
+
+function requireString(entry: any, field: string, label: string): string {
+  const value = typeof entry?.[field] === 'string' ? entry[field].trim() : '';
+  if (!value) throw new Error(`${label} : « ${field} » est obligatoire.`);
+  return value;
+}
+
+function parseHttpUrl(raw: string, label: string): URL {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${label} : url invalide.`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`${label} : protocole http(s) requis.`);
+  }
+  return url;
+}
+
+/**
+ * Parses STORAGE_NODES: a JSON array of sources. `type` is "http" (default, an AKAB node),
+ * "s3" (S3-compatible bucket) or "directory" (local/mounted folder).
+ */
 export function parseStorageNodes(raw: string | undefined): StorageNodeConfig[] {
   if (!raw || !raw.trim()) return [];
   let parsed: unknown;
@@ -47,26 +96,46 @@ export function parseStorageNodes(raw: string | undefined): StorageNodeConfig[] 
     throw new Error('STORAGE_NODES doit être un tableau JSON valide.');
   }
   if (!Array.isArray(parsed)) throw new Error('STORAGE_NODES doit être un tableau JSON.');
+
   const names = new Set<string>();
-  return parsed.map((entry: any, index) => {
+  return parsed.map((entry: any, index): StorageNodeConfig => {
+    const label = `STORAGE_NODES[${index}]`;
     const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
-    const token = typeof entry?.token === 'string' ? entry.token : '';
-    let url: URL;
-    try {
-      url = new URL(String(entry?.url));
-    } catch {
-      throw new Error(`STORAGE_NODES[${index}] : url invalide.`);
-    }
-    if (!/^[a-z0-9][a-z0-9-]{0,31}$/i.test(name)) {
-      throw new Error(`STORAGE_NODES[${index}] : nom invalide (lettres, chiffres, tirets).`);
-    }
+    if (!NODE_NAME.test(name)) throw new Error(`${label} : nom invalide (lettres, chiffres, tirets).`);
     if (names.has(name)) throw new Error(`STORAGE_NODES : nom en double « ${name} ».`);
     names.add(name);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      throw new Error(`STORAGE_NODES[${index}] : protocole http(s) requis.`);
+
+    const type = entry?.type ?? 'http';
+    if (type === 'http') {
+      const url = parseHttpUrl(String(entry?.url), label);
+      const token = typeof entry?.token === 'string' ? entry.token : '';
+      if (token.length < 32) throw new Error(`${label} : token d'au moins 32 caractères requis.`);
+      return { type, name, url: url.toString().replace(/\/$/, ''), token };
     }
-    if (token.length < 32) throw new Error(`STORAGE_NODES[${index}] : token d'au moins 32 caractères requis.`);
-    return { name, url: url.toString().replace(/\/$/, ''), token };
+    if (type === 's3') {
+      const endpoint = parseHttpUrl(String(entry?.endpoint), label);
+      const prefix = typeof entry?.prefix === 'string' ? entry.prefix.replace(/^\/+|\/+$/g, '') : '';
+      if (prefix && !/^[A-Za-z0-9._/-]+$/.test(prefix)) throw new Error(`${label} : prefix invalide.`);
+      const bucket = requireString(entry, 'bucket', label);
+      if (!/^[A-Za-z0-9._-]{3,63}$/.test(bucket)) throw new Error(`${label} : nom de bucket invalide.`);
+      return {
+        type,
+        name,
+        endpoint: endpoint.toString().replace(/\/$/, ''),
+        region: typeof entry?.region === 'string' && entry.region.trim() ? entry.region.trim() : 'us-east-1',
+        bucket,
+        accessKeyId: requireString(entry, 'accessKeyId', label),
+        secretAccessKey: requireString(entry, 'secretAccessKey', label),
+        prefix: prefix ? prefix + '/' : '',
+        pathStyle: entry?.pathStyle !== false,
+      };
+    }
+    if (type === 'directory') {
+      const dir = requireString(entry, 'path', label);
+      if (!path.isAbsolute(dir)) throw new Error(`${label} : « path » doit être un chemin absolu.`);
+      return { type, name, path: path.resolve(dir) };
+    }
+    throw new Error(`${label} : type inconnu « ${String(type)} » (http, s3 ou directory).`);
   });
 }
 

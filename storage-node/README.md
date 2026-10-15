@@ -50,6 +50,26 @@ STORAGE_WRITE_QUORUM=1    # copies nécessaires pour valider un envoi (≤ STORA
   **Modération → Stockage** montre l'état des nœuds et permet de lancer la réparation à la main.
 - Si trop de nœuds sont hors ligne, l'envoi est refusé (503) : jamais de repli silencieux vers du stockage non chiffré.
 
+## Autres sources : S3 et dossiers
+
+`STORAGE_NODES` accepte trois types d'entrées, mélangeables librement (le champ `type` vaut `http` par défaut) :
+
+```json
+[
+  {"name":"paris","url":"https://node1.example.org","token":"<64 hex>"},
+  {"type":"s3","name":"b2","endpoint":"https://s3.us-west-004.backblazeb2.com","region":"us-west-004",
+   "bucket":"akab-blobs","accessKeyId":"...","secretAccessKey":"...","prefix":"prod/"},
+  {"type":"directory","name":"nas","path":"/mnt/nas/akab"}
+]
+```
+
+- **`s3`** : tout service compatible S3 (AWS, Backblaze B2, MinIO, Wasabi, Cloudflare R2). `pathStyle` vaut `true` par
+  défaut ; mettre `false` pour les endpoints en « virtual-hosted style ». Utilisez une clé d'accès limitée à ce seul bucket.
+- **`directory`** : un dossier absolu (NAS, disque USB, montage `sshfs`/`rclone mount` pour du SFTP). Avec Docker/Podman,
+  le dossier doit être monté dans le conteneur backend.
+- Les identifiants S3 sont des **secrets** : ils vivent dans `STORAGE_NODES` (jamais dans Git, jamais affichés par l'API).
+- Les données étant chiffrées avant l'envoi, le fournisseur S3 ou le NAS ne voit que des blocs opaques.
+
 ## Sauvegarde et reprise après sinistre
 
 La base SQLite est sauvegardée chiffrée sur les nœuds (`STORAGE_BACKUP_INTERVAL_HOURS`, ou bouton

@@ -1,18 +1,9 @@
-import { StorageNodeConfig } from '../../config';
+import { HttpNodeConfig } from '../../config';
+import { NodeStatus, StorageProvider } from './provider';
 
-export interface NodeStatus {
-  name: string;
-  url: string;
-  reachable: boolean;
-  latencyMs: number | null;
-  blobs?: number;
-  bytes?: number;
-  quotaBytes?: number;
-  error?: string;
-}
-
-export class StorageNodeClient {
-  constructor(private readonly node: StorageNodeConfig, private readonly timeoutMs: number) {}
+/** Provider for an AKAB storage node (storage-node/) reached over HTTP(S). */
+export class StorageNodeClient implements StorageProvider {
+  constructor(private readonly node: HttpNodeConfig, private readonly timeoutMs: number) {}
 
   get name(): string {
     return this.node.name;
@@ -64,7 +55,7 @@ export class StorageNodeClient {
 
   async status(): Promise<NodeStatus> {
     const started = Date.now();
-    const base = { name: this.node.name, url: this.node.url };
+    const base = { name: this.node.name, type: 'http' as const, url: this.node.url };
     try {
       const res = await this.request('GET', '/v1/status');
       if (!res.ok) throw new Error(res.status === 401 ? 'jeton refusé' : `HTTP ${res.status}`);

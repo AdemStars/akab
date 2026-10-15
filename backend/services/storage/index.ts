@@ -2,7 +2,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { config, getDatabase } from '../../config';
-import { StorageNodeClient, NodeStatus } from './client';
+import { StorageNodeClient } from './client';
+import { DirectoryProvider } from './directory';
+import { NodeStatus, StorageProvider } from './provider';
+import { S3Provider } from './s3';
 import { BlobMeta, openBlob, rankNodes, sealBlob, sha256Hex } from './crypto';
 
 export const BLOB_REF_PREFIX = 'akab-';
@@ -29,8 +32,17 @@ export function parseBlobRef(ref: string): string | null {
   return BLOB_REF.exec(ref)?.[1] ?? null;
 }
 
-function clients(): StorageNodeClient[] {
-  return config.storage.nodes.map((node) => new StorageNodeClient(node, config.storage.timeoutMs));
+function clients(): StorageProvider[] {
+  return config.storage.nodes.map((node): StorageProvider => {
+    switch (node.type) {
+      case 's3':
+        return new S3Provider(node, config.storage.timeoutMs);
+      case 'directory':
+        return new DirectoryProvider(node);
+      default:
+        return new StorageNodeClient(node, config.storage.timeoutMs);
+    }
+  });
 }
 
 function key(): Buffer {
@@ -44,7 +56,7 @@ export class StorageService {
   }
 
   /** Where a blob should live: top-N nodes by rendezvous hash of its id. */
-  private static placement(id: string, all: StorageNodeClient[]): StorageNodeClient[] {
+  private static placement(id: string, all: StorageProvider[]): StorageProvider[] {
     return rankNodes(all, id).slice(0, Math.min(config.storage.replicas, all.length));
   }
 
@@ -114,7 +126,7 @@ export class StorageService {
   /** Copies blobs onto the nodes they should live on, from any node still holding them. */
   static async repair(): Promise<RepairReport> {
     const all = clients();
-    const holders = new Map<string, Set<StorageNodeClient>>();
+    const holders = new Map<string, Set<StorageProvider>>();
     const unreachable: string[] = [];
 
     await Promise.all(

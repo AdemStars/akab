@@ -86,6 +86,7 @@ export const StoragePanel: React.FC<StoragePanelProps> = ({ token, onError }) =>
                 <div>
                   <div style={{ fontWeight: 600 }}>
                     {node.name}{' '}
+                    <span className="badge">{({ s3: 'S3', directory: 'Dossier' } as Record<string, string>)[node.type] || 'Nœud AKAB'}</span>{' '}
                     <span className={`badge ${node.reachable ? 'badge-green' : 'badge-red'}`}>
                       {node.reachable ? 'En ligne' : 'Hors ligne'}
                     </span>

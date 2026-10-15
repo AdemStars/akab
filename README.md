@@ -105,6 +105,9 @@ bash scripts/local.sh nodes status
 bash scripts/local.sh nodes down     # retour au stockage local
 ```
 
+Les sources peuvent aussi être des **buckets S3-compatibles** (AWS, Backblaze B2, MinIO, Wasabi, R2) ou des **dossiers**
+(NAS, USB, sshfs) : voir « Autres sources » dans le README du nœud.
+
 Sans `STORAGE_NODES`, AKAB continue d'utiliser IPFS / le stockage local comme avant.
 
 ---

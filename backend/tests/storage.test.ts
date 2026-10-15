@@ -9,6 +9,10 @@ import { app } from '../server';
 import { config, getDatabase, setTestDatabase, closeDatabase, parseStorageNodes, parseStorageKey } from '../config';
 import { StorageService } from '../services/storage';
 import { openBlob, rankNodes, sealBlob } from '../services/storage/crypto';
+import { signRequest } from '../services/storage/sigv4';
+import { S3Provider } from '../services/storage/s3';
+import { DirectoryProvider } from '../services/storage/directory';
+import { FakeS3, startFakeS3 } from './helpers/fakeS3';
 import { FakeNode, startFakeNode } from './helpers/fakeNode';
 
 const KEY = crypto.randomBytes(32);
@@ -49,12 +53,73 @@ describe('Encrypted blob crypto', () => {
   });
 });
 
+describe('AWS Signature V4', () => {
+  it('matches the official AWS "GET Object" example signature', () => {
+    const authorization = signRequest({
+      method: 'GET',
+      url: new URL('https://examplebucket.s3.amazonaws.com/test.txt'),
+      headers: {
+        Range: 'bytes=0-9',
+        'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        'x-amz-date': '20130524T000000Z',
+      },
+      payloadHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+      secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+      region: 'us-east-1',
+      amzDate: '20130524T000000Z',
+    });
+    expect(authorization).toBe(
+      'AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, ' +
+        'SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, ' +
+        'Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41'
+    );
+  });
+
+  it('matches the official AWS "GET Bucket (List Objects)" example signature', () => {
+    const authorization = signRequest({
+      method: 'GET',
+      url: new URL('https://examplebucket.s3.amazonaws.com/?max-keys=2&prefix=J'),
+      headers: {
+        'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        'x-amz-date': '20130524T000000Z',
+      },
+      payloadHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+      secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+      region: 'us-east-1',
+      amzDate: '20130524T000000Z',
+    });
+    expect(authorization).toContain('Signature=34b48302e7b5fa45bde8084f4b7868a86f0a534bc59db6670ed5711ef69dc6f7');
+  });
+});
+
 describe('Storage configuration', () => {
   const token = 'a'.repeat(32);
+
+  it('validates S3 and directory sources', () => {
+    const [s3, dir] = parseStorageNodes(
+      JSON.stringify([
+        { type: 's3', name: 'b2', endpoint: 'https://s3.us-west-004.backblazeb2.com/', bucket: 'akab-blobs',
+          accessKeyId: 'id', secretAccessKey: 'secret', prefix: '/prod/' },
+        { type: 'directory', name: 'nas', path: '/mnt/nas/akab' },
+      ])
+    );
+    expect(s3).toMatchObject({ type: 's3', region: 'us-east-1', prefix: 'prod/', pathStyle: true,
+      endpoint: 'https://s3.us-west-004.backblazeb2.com' });
+    expect(dir).toEqual({ type: 'directory', name: 'nas', path: '/mnt/nas/akab' });
+
+    const bad = (entry: object) => () => parseStorageNodes(JSON.stringify([entry]));
+    expect(bad({ type: 's3', name: 'x', endpoint: 'https://h', bucket: 'ab', accessKeyId: 'i', secretAccessKey: 's' })).toThrow(/bucket/);
+    expect(bad({ type: 's3', name: 'x', endpoint: 'https://h', bucket: 'valid-bucket', accessKeyId: 'i' })).toThrow(/secretAccessKey/);
+    expect(bad({ type: 'directory', name: 'x', path: 'relative/dir' })).toThrow(/absolu/);
+    expect(bad({ type: 'ftp', name: 'x' })).toThrow(/type inconnu/);
+  });
+
   it('validates STORAGE_NODES', () => {
     expect(parseStorageNodes(undefined)).toEqual([]);
     expect(parseStorageNodes(JSON.stringify([{ name: 'paris', url: 'http://h:7000/', token }]))).toEqual([
-      { name: 'paris', url: 'http://h:7000', token },
+      { type: 'http', name: 'paris', url: 'http://h:7000', token },
     ]);
     expect(() => parseStorageNodes('not json')).toThrow(/JSON/);
     expect(() => parseStorageNodes(JSON.stringify([{ name: 'a', url: 'ftp://h', token }]))).toThrow(/http/);
@@ -252,5 +317,175 @@ describe('Replicated storage nodes', () => {
       await request(app).post('/api/auth/login').send({ email: 'storage-mod@akab.local', password: 'storage-moderator-123' })
     ).body.token;
     expect((await request(app).get('/api/admin/storage').set('Authorization', 'Bearer ' + modToken)).status).toBe(403);
+  });
+});
+
+describe('Other storage sources', () => {
+  const blob = (n = 64) => crypto.randomBytes(n);
+  const idOf = (data: Buffer) => crypto.createHash('sha256').update(data).digest('hex');
+
+  describe('S3-compatible bucket', () => {
+    let s3: FakeS3;
+    let provider: S3Provider;
+
+    beforeAll(async () => {
+      s3 = await startFakeS3('akab-bucket');
+      provider = new S3Provider(
+        { type: 's3', name: 'cloud', endpoint: s3.endpoint, region: 'eu-west-1', bucket: 'akab-bucket',
+          accessKeyId: 'KEY', secretAccessKey: 'SECRET', prefix: 'prod/', pathStyle: true },
+        2000
+      );
+    });
+    afterAll(() => s3.close());
+
+    it('stores, reads, lists across pages and deletes blobs under its prefix', async () => {
+      const items = [blob(), blob(), blob(), blob(), blob()];
+      for (const item of items) await provider.put(idOf(item), item);
+
+      expect([...s3.objects.keys()].every((key) => key.startsWith('prod/blobs/'))).toBe(true);
+      expect((await provider.list()).sort()).toEqual(items.map(idOf).sort());
+      expect((await provider.get(idOf(items[0])))!.equals(items[0])).toBe(true);
+      expect(await provider.get('f'.repeat(64))).toBeNull();
+
+      await provider.delete(idOf(items[0]));
+      expect(await provider.get(idOf(items[0]))).toBeNull();
+      await expect(provider.get('../etc/passwd')).rejects.toThrow(/invalide/);
+    });
+
+    it('keeps pointers apart from blobs and signs every request without leaking the secret', async () => {
+      await provider.putPointer('db-latest', Buffer.from('ptr'));
+      expect((await provider.getPointer('db-latest'))!.toString()).toBe('ptr');
+      expect(await provider.getPointer('missing')).toBeNull();
+      expect(s3.objects.has('prod/pointers/db-latest')).toBe(true);
+      expect((await provider.list()).every((id) => /^[0-9a-f]{64}$/.test(id))).toBe(true);
+
+      for (const request of s3.requests) {
+        expect(request.authorization).toMatch(/Credential=KEY\/\d{8}\/eu-west-1\/s3\/aws4_request/);
+        expect(request.authorization).not.toContain('SECRET');
+      }
+      const status = await provider.status();
+      expect(status).toMatchObject({ type: 's3', reachable: true });
+      expect(status.blobs).toBeGreaterThan(0);
+      expect(JSON.stringify(status)).not.toContain('SECRET');
+    });
+
+    it('reports an unreachable bucket', async () => {
+      s3.down = true;
+      const status = await provider.status();
+      s3.down = false;
+      expect(status.reachable).toBe(false);
+    });
+  });
+
+  describe('Directory', () => {
+    let dir: string;
+    let provider: DirectoryProvider;
+
+    beforeAll(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akab-dir-'));
+      provider = new DirectoryProvider({ type: 'directory', name: 'usb', path: dir });
+    });
+    afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    it('round-trips blobs and pointers and refuses path traversal', async () => {
+      const data = blob(300);
+      await provider.put(idOf(data), data);
+      await provider.put(idOf(data), data);
+      expect((await provider.get(idOf(data)))!.equals(data)).toBe(true);
+      expect(await provider.list()).toEqual([idOf(data)]);
+      expect(fs.readdirSync(path.join(dir, 'blobs', idOf(data).slice(0, 2)))).toEqual([idOf(data)]);
+
+      await provider.putPointer('db-latest', Buffer.from('v1'));
+      await provider.putPointer('db-latest', Buffer.from('v2'));
+      expect((await provider.getPointer('db-latest'))!.toString()).toBe('v2');
+
+      await expect(provider.get('../../etc/passwd')).rejects.toThrow(/invalide/);
+      await expect(provider.getPointer('../x')).rejects.toThrow(/invalide/);
+      expect(await provider.status()).toMatchObject({ type: 'directory', reachable: true, blobs: 1, bytes: 300 });
+
+      await provider.delete(idOf(data));
+      expect(await provider.get(idOf(data))).toBeNull();
+    });
+  });
+
+  describe('Mixed fleet (AKAB node + S3 + directory)', () => {
+    let node: FakeNode;
+    let s3: FakeS3;
+    let dir: string;
+    const original = { ...config.storage };
+
+    beforeAll(async () => {
+      setTestDatabase(new Database(':memory:'));
+      node = await startFakeNode('akab-node');
+      s3 = await startFakeS3('mixed-bucket');
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akab-mixed-'));
+      config.storage.nodes = [
+        { type: 'http', name: 'akab-node', url: node.url, token: node.token },
+        { type: 's3', name: 'cloud', endpoint: s3.endpoint, region: 'us-east-1', bucket: 'mixed-bucket',
+          accessKeyId: 'KEY', secretAccessKey: 'SECRET', prefix: '', pathStyle: true },
+        { type: 'directory', name: 'nas', path: dir },
+      ];
+      config.storage.encryptionKey = KEY;
+      config.storage.replicas = 2;
+      config.storage.writeQuorum = 1;
+      config.storage.timeoutMs = 2000;
+    });
+
+    afterAll(async () => {
+      Object.assign(config.storage, original);
+      await node.close();
+      await s3.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+      closeDatabase();
+    });
+
+    it('replicates encrypted data across different kinds of sources and survives losing one', async () => {
+      const data = Buffer.from('preuve '.repeat(100));
+      const refs: string[] = [];
+      for (let i = 0; i < 6; i += 1) refs.push((await StorageService.store(Buffer.concat([data, blob(8)]), { mimeType: 'image/png' })).ref);
+
+      const where = (id: string) => [
+        node.blobs.has(id),
+        s3.objects.has(`blobs/${id}`),
+        fs.existsSync(path.join(dir, 'blobs', id.slice(0, 2), id)),
+      ];
+      for (const ref of refs) {
+        expect(where(ref.slice(5)).filter(Boolean)).toHaveLength(2);
+      }
+      const kinds = new Set(refs.flatMap((ref) => where(ref.slice(5)).map((held, i) => (held ? i : -1))));
+      expect(kinds.size).toBeGreaterThanOrEqual(3);
+
+      for (const stored of s3.objects.values()) expect(stored.includes(data.subarray(0, 30))).toBe(false);
+
+      node.down = true;
+      for (const ref of refs) expect(await StorageService.retrieve(ref)).not.toBeNull();
+      node.down = false;
+
+      const missing = refs.find((ref) => s3.objects.has(`blobs/${ref.slice(5)}`))!;
+      s3.objects.delete(`blobs/${missing.slice(5)}`);
+      const report = await StorageService.repair();
+      expect(report.copied).toBeGreaterThanOrEqual(1);
+      expect(s3.objects.has(`blobs/${missing.slice(5)}`)).toBe(true);
+
+      const status = await StorageService.status();
+      expect(status.nodes.map((n) => [n.name, n.type, n.reachable])).toEqual([
+        ['akab-node', 'http', true],
+        ['cloud', 's3', true],
+        ['nas', 'directory', true],
+      ]);
+      expect(JSON.stringify(status)).not.toContain('SECRET');
+    });
+
+    it('backs up and restores the database using only the mixed sources', async () => {
+      getDatabase().exec("CREATE TABLE IF NOT EXISTS mixed_probe (v TEXT); INSERT INTO mixed_probe VALUES ('ok');");
+      const report = await StorageService.backupDatabase();
+      expect(report.storedOn).toHaveLength(2);
+
+      const target = path.join(dir, 'restored.sqlite');
+      await StorageService.restoreLatestBackup(target);
+      const copy = new Database(target, { readonly: true });
+      expect(copy.prepare('SELECT v FROM mixed_probe').all()).toEqual([{ v: 'ok' }]);
+      copy.close();
+    });
   });
 });
